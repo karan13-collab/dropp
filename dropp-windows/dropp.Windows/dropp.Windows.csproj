@@ -45,7 +45,6 @@
   <ItemGroup>
     <Folder Include="Core\Networking\" />
     <Folder Include="Core\Agentic\" />
-    <Folder Include="Core\Services\" />
   </ItemGroup>
 
   <!--

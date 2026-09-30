@@ -32,7 +32,13 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
-
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus) {
+            // The millisecond the app opens on screen, check for new copied text!
+            com.dropp.dropp.services.DroppBackgroundService.clipboardManager?.checkAndSyncCurrentClipboard()
+        }
+    }
     private fun startDroppService() {
         val serviceIntent = Intent(this, DroppBackgroundService::class.java)
         ContextCompat.startForegroundService(this, serviceIntent)
@@ -53,4 +59,5 @@ fun GreetingPreview() {
     DroppTheme {
         Greeting("Android")
     }
+
 }

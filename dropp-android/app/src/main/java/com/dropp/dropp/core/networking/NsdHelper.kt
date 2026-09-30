@@ -41,7 +41,7 @@ class NsdHelper(private val context: Context) {
         nsdManager.registerService(serviceInfo, NsdManager.PROTOCOL_DNS_SD, listener)
     }
 
-    fun startDiscovering() {
+    fun startDiscovering(onIpResolved: (String) -> Unit) {
         // 1. Create it as a strictly non-null local variable
         val listener = object : NsdManager.DiscoveryListener {
             override fun onDiscoveryStarted(regType: String) {
@@ -60,6 +60,7 @@ class NsdHelper(private val context: Context) {
                         override fun onServiceResolved(serviceInfo: NsdServiceInfo) {
                             val hostAddress = serviceInfo.host.hostAddress
                             Log.d(TAG, "Found Windows PC at $hostAddress:${serviceInfo.port}")
+                            onIpResolved(hostAddress)
                         }
                     })
                 }
