@@ -18,11 +18,13 @@ import com.dropp.dropp.core.networking.NsdHelper
 class DroppBackgroundService : Service() {
     companion object {
         var clipboardManager: ClipboardSyncManager? = null
+        var fileTransferManager: FileTransferManager? = null
     }
 
     private lateinit var nsdHelper: NsdHelper
     private lateinit var clipboardSyncManager: ClipboardSyncManager
     private lateinit var mediaObserver: MediaObserver
+    private lateinit var fileTransferManager: FileTransferManager
 
     override fun onCreate() {
         super.onCreate()
@@ -60,7 +62,10 @@ class DroppBackgroundService : Service() {
             true,
             mediaObserver
         )
-
+        // Initialize and start the File Transfer Manager
+        fileTransferManager = FileTransferManager(this)
+        Companion.fileTransferManager = this.fileTransferManager
+        fileTransferManager.start()
         // 3. Initialize Networking
         nsdHelper = NsdHelper(this)
         nsdHelper.startBroadcasting()
@@ -68,6 +73,7 @@ class DroppBackgroundService : Service() {
         // 4. Start discovering, and map the IP when found!
         nsdHelper.startDiscovering { ipAddress ->
             clipboardSyncManager.setTargetIp(ipAddress)
+            fileTransferManager.setTargetIp(ipAddress)
         }
     }
 

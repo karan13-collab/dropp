@@ -56,6 +56,7 @@ namespace dropp.Windows.Core.Networking
                         {
                             Debug.WriteLine($"Found External Peer: {host.DisplayName} at {host.IPAddress}:{port}");
                             App.ClipboardService.SetTargetIp(host.IPAddress.ToString());
+                            App.FileTransfer?.SetTargetIp(host.IPAddress.ToString());
                         }
                     }
 

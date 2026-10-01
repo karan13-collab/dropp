@@ -1,0 +1,10 @@
+{
+  "profiles": {
+    "dropp.Windows (Package)": {
+      "commandName": "MsixPackage"
+    },
+    "dropp.Windows (Unpackaged)": {
+      "commandName": "Project"
+    }
+  }
+}
