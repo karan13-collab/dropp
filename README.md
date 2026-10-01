@@ -1,4 +1,4 @@
-# 💧 dropp
+# dropp
 
 **A seamless, cloud-free, native cross-platform ecosystem for Android and Windows.**
 
