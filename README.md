@@ -6,9 +6,9 @@
 ![Tech Stack](https://img.shields.io/badge/Tech-WinUI%203%20%7C%20Kotlin-purple)
 ![License](https://img.shields.io/badge/License-MIT-green)
 
-**dropp** is an open-source connectivity ecosystem designed to bridge the gap between Windows PCs and Android devices. Built to rival proprietary systems like Apple Continuity, Microsoft Phone Link, and Samsung DeX, dropp operates entirely locally via peer-to-peer connections. No cloud servers, no account logins, and no internet connection required.
+**dropp** is an open-source connectivity ecosystem designed to bridge the gap between Windows PCs and Android devices. Built as an Universal Alternative to  proprietary systems like Apple Continuity, Microsoft Phone Link, and Samsung DeX, dropp operates entirely locally via peer-to-peer connections. No cloud servers, no account logins, and no internet connection required.
 
-It deeply integrates into the native operating systems—utilizing the Android Share Sheet and the Windows 11 Right-Click Share Menu—so it feels like a built-in OS feature, not just a standalone app.
+It deeply integrates into the native operating systems—utilizing the Android Share Sheet and the Windows 11 Right-Click Share Menu, so it feels like a built-in OS feature, not just a standalone app.
 
 ---
 
@@ -25,7 +25,7 @@ The foundational P2P engine is currently active and fully functional.
 
 ---
 
-## 🚀 The Master Roadmap
+## 🚀 Roadmap
 
 dropp is evolving into a complete hardware-sharing and screen-virtualization suite. Here is the upcoming roadmap categorized by system complexity:
 
