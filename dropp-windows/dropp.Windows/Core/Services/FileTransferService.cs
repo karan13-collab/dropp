@@ -11,7 +11,7 @@ namespace dropp.Windows.Services
     public class FileTransferService
     {
         private const int FilePort = 8767;
-        private string _targetIp;
+        public string _targetIp { get; set; } = "";
 
         public void SetTargetIp(string ip)
         {

@@ -11,7 +11,7 @@
     <UseWinUI>true</UseWinUI>
     <EnableMsixTooling>true</EnableMsixTooling>
     <Nullable>enable</Nullable>
-	  <WindowsPackageType>None</WindowsPackageType>
+	  <WindowsPackageType>MSIX</WindowsPackageType>
   </PropertyGroup>
 
   <ItemGroup>

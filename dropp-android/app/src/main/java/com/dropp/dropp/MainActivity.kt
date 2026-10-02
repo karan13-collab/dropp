@@ -3,13 +3,17 @@ package com.dropp.dropp
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
+import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Button
 import androidx.compose.material3.Scaffold
@@ -17,7 +21,10 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.tooling.preview.Preview
+import androidx.compose.ui.unit.dp
+import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import com.dropp.dropp.services.DroppBackgroundService
 import com.dropp.dropp.ui.theme.DroppTheme
@@ -52,8 +59,6 @@ class MainActivity : ComponentActivity() {
         ContextCompat.startForegroundService(this, serviceIntent)
     }
 
-    // 1. We moved this function INSIDE the MainActivity class!
-    // Now it can successfully read the Activity's 'intent' property.
     private fun handleIncomingSharedFiles() {
         when (intent?.action) {
             Intent.ACTION_SEND -> {
@@ -78,20 +83,22 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 fun DroppMainScreen(modifier: Modifier = Modifier) {
+    val context = LocalContext.current
+
     // 1. Prepare the File Picker Launcher in Compose
     val filePickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
     ) { uri: Uri? ->
         uri?.let {
-            // 2. Send the file using our background service!
             DroppBackgroundService.fileTransferManager?.sendFile(it)
         }
     }
 
-    // 3. Draw the UI Button in the center of the screen
-    Box(
+    // 2. Draw the UI with multiple buttons
+    Column(
         modifier = modifier.fillMaxSize(),
-        contentAlignment = Alignment.Center
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
     ) {
         Button(onClick = {
             // "*/*" opens the Android file browser and allows picking any file type
@@ -99,8 +106,23 @@ fun DroppMainScreen(modifier: Modifier = Modifier) {
         }) {
             Text("Test Send File to Windows")
         }
-    }
 
+        Spacer(modifier = Modifier.height(16.dp))
+
+        Button(onClick = {
+            // Check if permission is already granted
+            val isGranted = NotificationManagerCompat.getEnabledListenerPackages(context)
+                .contains(context.packageName)
+
+            if (!isGranted) {
+                // Open the Android settings screen for Notification Access
+                val intent = Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)
+                context.startActivity(intent)
+            }
+        }) {
+            Text("Grant Notification Permission")
+        }
+    }
 }
 
 @Preview(showBackground = true)

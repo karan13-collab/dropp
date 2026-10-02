@@ -60,6 +60,10 @@ class NsdHelper(private val context: Context) {
                         override fun onServiceResolved(serviceInfo: NsdServiceInfo) {
                             val hostAddress = serviceInfo.host.hostAddress
                             Log.d(TAG, "Found Windows PC at $hostAddress:${serviceInfo.port}")
+
+                            // --- NEW: Feed the IP to the Command engine ---
+                            com.dropp.dropp.core.networking.CommandTransferManager.targetWindowsIp = hostAddress
+
                             onIpResolved(hostAddress)
                         }
                     })

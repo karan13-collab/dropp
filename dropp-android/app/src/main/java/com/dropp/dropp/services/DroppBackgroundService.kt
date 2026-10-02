@@ -66,6 +66,7 @@ class DroppBackgroundService : Service() {
         fileTransferManager = FileTransferManager(this)
         Companion.fileTransferManager = this.fileTransferManager
         fileTransferManager.start()
+        com.dropp.dropp.core.networking.CommandReceiverService.startListening(this)
         // 3. Initialize Networking
         nsdHelper = NsdHelper(this)
         nsdHelper.startBroadcasting()

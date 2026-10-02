@@ -10,9 +10,9 @@ namespace dropp.Windows
 {
     public partial class App : Application
     {
-        // Adding the '?' (nullable) magically fixes all those CS8618 warnings!
         public static ClipboardSyncService? ClipboardService { get; private set; }
         public static FileTransferService? FileTransfer { get; private set; }
+        public static CommandReceiverService? CommandReceiver { get; private set; }
 
         private Window? m_window;
         private MdnsManager? _mdnsManager;
@@ -24,21 +24,103 @@ namespace dropp.Windows
 
         protected override void OnLaunched(Microsoft.UI.Xaml.LaunchActivatedEventArgs args)
         {
+            var mainInstance = AppInstance.FindOrRegisterForKey("main");
+            var activatedArgs = AppInstance.GetCurrent().GetActivatedEventArgs();
+
+            if (!mainInstance.IsCurrent)
+            {
+                // We are the ghost instance! Forward the payload and die safely.
+                try
+                {
+                    mainInstance.RedirectActivationToAsync(activatedArgs).AsTask().Wait();
+                }
+                catch { /* Ignore ghost failures */ }
+
+                Environment.Exit(0);
+                return;
+            }
+
+
+            // --- 2. CATCH THE REPLY ---
+            mainInstance.Activated += (sender, incomingArgs) =>
+            {
+                Debug.WriteLine($"\n=======================================");
+                Debug.WriteLine($"[ACTIVATION RECEIVED] Kind: {incomingArgs.Kind}");
+
+                if (incomingArgs.Data is global::Windows.ApplicationModel.Activation.ToastNotificationActivatedEventArgs toastArgs)
+                {
+                    // 1. Remove the "action=" prefix
+                    string rawAction = toastArgs.Argument.Replace("action=", "");
+
+                    // 2. Decode the URL encoding (Converts %3D back into =)
+                    string actionId = Uri.UnescapeDataString(rawAction);
+                    string replyText = "";
+
+                    // 3. Extract the text
+                    foreach (var input in toastArgs.UserInput)
+                    {
+                        if (input.Key == actionId)
+                        {
+                            replyText = input.Value?.ToString() ?? "";
+                        }
+                    }
+
+                    if (!string.IsNullOrEmpty(actionId) && !string.IsNullOrEmpty(replyText))
+                    {
+                        var replyJson = new System.Text.Json.Nodes.JsonObject
+                        {
+                            ["Type"] = "REPLY",
+                            ["ActionId"] = actionId,
+                            ["Text"] = replyText
+                        };
+                        string jsonString = replyJson.ToJsonString();
+                        Debug.WriteLine($"[JSON Payload] {jsonString}");
+
+                        // --- NEW: Send it back to Android on Port 8082 ---
+                        _ = Task.Run(async () =>
+                        {
+                            try
+                            {
+                                // We pull the Android IP that was discovered earlier by mDNS
+                                string targetIp = FileTransfer?._targetIp ?? "";
+                                if (string.IsNullOrEmpty(targetIp)) return;
+
+                                using (var client = new System.Net.Sockets.TcpClient())
+                                {
+                                    await client.ConnectAsync(targetIp, 8082); // Connect to Android
+                                    using (var writer = new System.IO.StreamWriter(client.GetStream()))
+                                    {
+                                        await writer.WriteLineAsync(jsonString); // Beam the text!
+                                    }
+                                }
+                                Debug.WriteLine("[Reply Sent] Successfully beamed reply to Android!");
+                            }
+                            catch (Exception ex)
+                            {
+                                Debug.WriteLine($"[Reply Send Error] {ex.Message}");
+                            }
+                        });
+                    }
+                }
+                Debug.WriteLine($"=======================================\n");
+            };
+
+            Debug.WriteLine("[App] Main instance armed and waiting for Reply clicks...");
+
             m_window = new MainWindow();
 
-            // 1. Initialize both of our ecosystem services
             ClipboardService = new ClipboardSyncService(m_window.DispatcherQueue);
             FileTransfer = new FileTransferService();
+            CommandReceiver = new CommandReceiverService();
 
-            // 2. Start the clipboard background watcher
             ClipboardService.Start();
             FileTransfer?.Start();
+            CommandReceiver.Start();
+
             m_window.Activate();
 
-            // 3. Initialize your Networking manager
             _mdnsManager = new MdnsManager();
 
-            // 4. Fire and forget the background network discovery
             _ = Task.Run(async () =>
             {
                 Debug.WriteLine("Starting mDNS discovery and broadcast for dropp ecosystem...");
@@ -47,15 +129,13 @@ namespace dropp.Windows
             });
 
             // --- NATIVE WINDOWS SHARE TARGET HANDLING ---
-            var activatedArgs = AppInstance.GetCurrent().GetActivatedEventArgs();
             if (activatedArgs.Kind == ExtendedActivationKind.ShareTarget)
             {
-                // The 'global::' prefix fixes the namespace collision!
                 var shareArgs = activatedArgs.Data as global::Windows.ApplicationModel.Activation.ShareTargetActivatedEventArgs;
                 if (shareArgs != null)
                 {
                     var shareOperation = shareArgs.ShareOperation;
-                    shareOperation.ReportStarted(); // Tells Windows UI we are processing it
+                    shareOperation.ReportStarted();
 
                     _ = Task.Run(async () =>
                     {
@@ -69,19 +149,10 @@ namespace dropp.Windows
                                     if (item is global::Windows.Storage.StorageFile file)
                                     {
                                         Debug.WriteLine($"[ShareTarget] Received {file.Name} from Windows Share menu.");
-
-                                        // 1. BYPASS THE SANDBOX: Copy the securely shared file to our app's Temp folder so C# can read it
                                         var tempFolder = global::Windows.Storage.ApplicationData.Current.TemporaryFolder;
                                         var tempFile = await file.CopyAsync(tempFolder, file.Name, global::Windows.Storage.NameCollisionOption.ReplaceExisting);
-
-                                        // 2. BYPASS THE RACE CONDITION: Give mDNS 3 seconds to find the Android phone before sending
                                         await Task.Delay(3000);
-
-                                        if (FileTransfer != null)
-                                        {
-                                            // 3. Send the copied Temp file!
-                                            await FileTransfer.SendFileAsync(tempFile.Path);
-                                        }
+                                        if (FileTransfer != null) await FileTransfer.SendFileAsync(tempFile.Path);
                                     }
                                 }
                             }
@@ -92,7 +163,6 @@ namespace dropp.Windows
                         }
                         finally
                         {
-                            // Tells Windows we are done so it can close the Share UI overlay
                             shareOperation.ReportCompleted();
                         }
                     });
