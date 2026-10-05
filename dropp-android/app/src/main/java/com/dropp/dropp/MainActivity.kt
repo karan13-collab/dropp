@@ -28,12 +28,19 @@ import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import com.dropp.dropp.services.DroppBackgroundService
 import com.dropp.dropp.ui.theme.DroppTheme
+import android.widget.Toast
+import androidx.compose.foundation.layout.Box
+import com.google.mlkit.vision.codescanner.GmsBarcodeScanning
+import com.google.mlkit.vision.codescanner.GmsBarcodeScannerOptions
+import com.google.mlkit.vision.barcode.common.Barcode
+import com.dropp.dropp.core.security.SecurityManager
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         startDroppService()
+        SecurityManager.init(this)
 
         // Catch files if opened from the Share menu
         handleIncomingSharedFiles()
@@ -41,12 +48,58 @@ class MainActivity : ComponentActivity() {
         setContent {
             DroppTheme {
                 Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
-                    DroppMainScreen(modifier = Modifier.padding(innerPadding))
+                    // We use a Column to stack your existing UI and the new Button
+                    Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(innerPadding),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        // Your existing screen takes up the available space
+                        Box(modifier = Modifier.weight(1f)) {
+                            DroppMainScreen(modifier = Modifier.fillMaxSize())
+                        }
+
+                        // The new QR Pair button anchored at the bottom
+                        Button(
+                            onClick = { startQrScanner() },
+                            modifier = Modifier.padding(16.dp)
+                        ) {
+                            Text("Scan QR Code to Pair")
+                        }
+                    }
                 }
             }
         }
     }
+    private fun startQrScanner() {
+        val options = GmsBarcodeScannerOptions.Builder()
+            .setBarcodeFormats(Barcode.FORMAT_QR_CODE)
+            .enableAutoZoom() // Highly recommended by Google for easy scanning
+            .build()
 
+        val scanner = GmsBarcodeScanning.getClient(this, options)
+
+        scanner.startScan()
+            .addOnSuccessListener { barcode ->
+                val scannedKey = barcode.rawValue
+                if (scannedKey != null && scannedKey.length > 20) {
+                    // Save it permanently!
+                    SecurityManager.saveKey(this, scannedKey)
+                    Toast.makeText(this, "Paired Successfully!", Toast.LENGTH_LONG).show()
+
+                    // (Optional: Start your networking services here if they aren't already running)
+                } else {
+                    Toast.makeText(this, "Invalid QR Code", Toast.LENGTH_SHORT).show()
+                }
+            }
+            .addOnCanceledListener {
+                Toast.makeText(this, "Scan canceled", Toast.LENGTH_SHORT).show()
+            }
+            .addOnFailureListener { e ->
+                Toast.makeText(this, "Scan failed: ${e.message}", Toast.LENGTH_SHORT).show()
+            }
+    }
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
         if (hasFocus) {

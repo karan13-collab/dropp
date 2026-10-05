@@ -13,6 +13,7 @@ import org.json.JSONObject
 import java.io.BufferedReader
 import java.io.InputStreamReader
 import java.net.ServerSocket
+import com.dropp.dropp.core.security.SecurityManager
 
 object CommandReceiverService {
     private const val COMMAND_PORT = 8082
@@ -31,10 +32,10 @@ object CommandReceiverService {
 
                         // We caught a packet from Windows!
                         val reader = BufferedReader(InputStreamReader(socket.getInputStream()))
-                        val jsonString = reader.readLine()
-
-                        if (jsonString != null) {
-                            Log.d("dropp", "Received from Windows: $jsonString")
+                        val encryptedLine = reader.readLine()
+                        if (encryptedLine != null) {
+                            val jsonString = com.dropp.dropp.core.security.EncryptionHelper.decrypt(encryptedLine, SecurityManager.MASTER_KEY)
+                            Log.d("dropp", "Decrypted from Windows: $jsonString")
                             processCommand(context, jsonString)
                         }
                         socket.close()

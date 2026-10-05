@@ -32,27 +32,19 @@ object CommandTransferManager {
                 Log.d("dropp", "Connecting to Windows at $ip:$COMMAND_PORT...")
                 Socket(ip, COMMAND_PORT).use { socket ->
                     val out = PrintWriter(socket.getOutputStream(), true)
-                    out.println(jsonPayload) // Send the JSON and a newline character
-                    Log.d("dropp", "✅ Command successfully sent to Windows!")
+
+                    // --- SECURITY: Encrypt the payload before sending! ---
+                    val encryptedPayload = com.dropp.dropp.core.security.EncryptionHelper.encrypt(
+                        jsonPayload,
+                        com.dropp.dropp.core.security.SecurityManager.MASTER_KEY
+                    )
+
+                    out.println(encryptedPayload) // Send the scrambled text over the network
+                    Log.d("dropp", "Encrypted command successfully sent to Windows!")
                 }
             } catch (e: Exception) {
                 Log.e("dropp", "Network Failed to send command: ${e.message}", e)
             }
         }
     }
-
-        // Run the network call on a background thread so it doesn't freeze the app
-        /*CoroutineScope(Dispatchers.IO).launch {
-            try {
-                Log.d("dropp", "Connecting to Windows at $ip:$COMMAND_PORT...")
-                Socket(ip, COMMAND_PORT).use { socket ->
-                    val out = PrintWriter(socket.getOutputStream(), true)
-                    out.println(jsonPayload) // Send the JSON and a newline character
-                    Log.d("dropp", "✅ Command successfully sent to Windows!")
-                }
-            } catch (e: Exception) {
-                Log.e("dropp", "Failed to send command: ${e.message}")
-            }
-        }*/
-
 }

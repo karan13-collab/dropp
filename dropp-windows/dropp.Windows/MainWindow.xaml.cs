@@ -13,6 +13,8 @@ using Microsoft.UI.Xaml.Navigation;
 using Windows.Foundation;
 using Windows.Foundation.Collections;
 using Windows.Storage.Pickers;
+using Microsoft.UI.Xaml.Media.Imaging;
+using QRCoder;
 
 // To learn more about WinUI, the WinUI project structure,
 // and more about our project templates, see: http://aka.ms/winui-project-info.
@@ -26,7 +28,22 @@ namespace dropp.Windows
     {
         public MainWindow()
         {
-            InitializeComponent();
+            this.InitializeComponent();
+            ShowPairingQrCode();
+        }
+        private void ShowPairingQrCode()
+        {
+            // 1. Generate the QR Code data
+            QRCodeGenerator qrGenerator = new QRCodeGenerator();
+            QRCodeData qrCodeData = qrGenerator.CreateQrCode(App.MasterKey, QRCodeGenerator.ECCLevel.L);
+            PngByteQRCode qrCode = new PngByteQRCode(qrCodeData);
+            byte[] qrCodeBytes = qrCode.GetGraphic(20);
+
+            // 2. Save temporarily and load into the UI (safest method for WinUI 3)
+            string tempFile = Path.Combine(global::Windows.Storage.ApplicationData.Current.TemporaryFolder.Path, "pairing_qr.png");
+            File.WriteAllBytes(tempFile, qrCodeBytes);
+
+            QrCodeImage.Source = new BitmapImage(new Uri(tempFile));
         }
         private async void TestSendFile_Click(object sender, RoutedEventArgs e)
         {

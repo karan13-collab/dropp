@@ -14,6 +14,14 @@
     </Window.SystemBackdrop>
 
     <Grid>
-        <Button Content="Test Send File to Android" Click="TestSendFile_Click" HorizontalAlignment="Center" VerticalAlignment="Center" />
+        <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="20">
+            <!-- QR Code UI -->
+            <TextBlock Text="Pair your phone with dropp" FontSize="24" FontWeight="SemiBold" HorizontalAlignment="Center"/>
+            <Image x:Name="QrCodeImage" Width="250" Height="250" HorizontalAlignment="Center"/>
+            <TextBlock Text="Scan this code from the dropp Android app" FontSize="14" Foreground="Gray" HorizontalAlignment="Center"/>
+
+            <!-- Your existing test button -->
+            <Button Content="Test Send File to Android" Click="TestSendFile_Click" HorizontalAlignment="Center" />
+        </StackPanel>
     </Grid>
 </Window>

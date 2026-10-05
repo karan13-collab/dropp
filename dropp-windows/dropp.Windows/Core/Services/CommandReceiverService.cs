@@ -26,7 +26,7 @@ namespace dropp.Windows.Services
             {
                 _listener = new TcpListener(IPAddress.Any, CommandPort);
                 _listener.Start();
-                Debug.WriteLine($"[CommandReceiver] Listening for JSON commands on port {CommandPort}...");
+                Debug.WriteLine($"[CommandReceiver] Listening for encrypted commands on port {CommandPort}...");
 
                 while (true)
                 {
@@ -47,16 +47,22 @@ namespace dropp.Windows.Services
                 using (client)
                 using (var reader = new StreamReader(client.GetStream()))
                 {
-                    string? jsonPayload = await reader.ReadLineAsync();
-                    if (string.IsNullOrEmpty(jsonPayload)) return;
+                    // 1. Read the raw, encrypted Base64 string from the network
+                    string? encryptedPayload = await reader.ReadLineAsync();
+                    if (string.IsNullOrEmpty(encryptedPayload)) return;
 
-                    Debug.WriteLine($"[CommandReceiver] Caught Payload: {jsonPayload}");
+                    // 2. Decrypt it using our saved Master Key
+                    string jsonPayload = Core.Security.EncryptionHelper.Decrypt(encryptedPayload, App.MasterKey);
+
+                    Debug.WriteLine($"[CommandReceiver] Successfully Decrypted Payload: {jsonPayload}");
+
+                    // 3. Process the standard JSON
                     ProcessCommand(jsonPayload);
                 }
             }
             catch (Exception ex)
             {
-                Debug.WriteLine($"[CommandReceiver] Client Error: {ex.Message}");
+                Debug.WriteLine($"[CommandReceiver] Client/Decryption Error: {ex.Message}");
             }
         }
 

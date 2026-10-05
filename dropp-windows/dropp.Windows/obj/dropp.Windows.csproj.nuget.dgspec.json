@@ -62,6 +62,10 @@
               "target": "Package",
               "version": "[2.5.1, )"
             },
+            "QRCoder": {
+              "target": "Package",
+              "version": "[1.8.0, )"
+            },
             "Zeroconf": {
               "target": "Package",
               "version": "[3.7.16, )"
