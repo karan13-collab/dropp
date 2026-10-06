@@ -1,5 +1,5 @@
 package com.dropp.dropp.services
-
+import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.Service
@@ -14,8 +14,11 @@ import android.os.Looper
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.dropp.dropp.core.networking.NsdHelper
+import android.content.pm.ServiceInfo
 
 class DroppBackgroundService : Service() {
+    private val CHANNEL_ID = "DroppForegroundServiceChannel"
+    private val NOTIFICATION_ID = 1
     companion object {
         var clipboardManager: ClipboardSyncManager? = null
         var fileTransferManager: FileTransferManager? = null
@@ -28,27 +31,33 @@ class DroppBackgroundService : Service() {
 
     override fun onCreate() {
         super.onCreate()
-
-        // Android 8+ requires a Notification Channel for Foreground Services
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
-                "dropp_sync",
+                "dropp_sync_2", // <--- CHANGED HERE
                 "Dropp Ecosystem Sync",
-                NotificationManager.IMPORTANCE_LOW
+                NotificationManager.IMPORTANCE_DEFAULT
             )
             val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
             manager.createNotificationChannel(channel)
         }
 
-        // Create the persistent notification
-        val notification = NotificationCompat.Builder(this, "dropp_sync")
+// 2. Second, build the persistent notification using that exact channel ID
+        val syncNotification = NotificationCompat.Builder(this, "dropp_sync_2") // <--- CHANGED HERE
             .setContentTitle("dropp")
-            .setContentText("Looking for nearby devices...")
+            .setContentText("Listening for PC clipboard and files...")
             .setSmallIcon(android.R.drawable.stat_notify_sync)
+            .setOngoing(true)
             .build()
 
-        // Start the service in the foreground so the OS doesn't kill it
-        startForeground(1, notification)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            startForeground(
+                1,
+                syncNotification,
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+            )
+        } else {
+            startForeground(1, syncNotification)
+        }
 
         // 1. Initialize and start the Clipboard Manager
         clipboardSyncManager = ClipboardSyncManager(this)
@@ -85,7 +94,7 @@ class DroppBackgroundService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        return START_STICKY // Restart automatically if killed
+        return START_STICKY // Ensures Android restarts it if it crashes
     }
 
     override fun onBind(intent: Intent?): IBinder? = null

@@ -50,6 +50,10 @@
         "net8.0-windows10.0.19041": {
           "targetAlias": "net8.0-windows10.0.19041.0",
           "dependencies": {
+            "H.NotifyIcon.WinUI": {
+              "target": "Package",
+              "version": "[2.0.124, )"
+            },
             "Makaretu.Dns.Multicast.New": {
               "target": "Package",
               "version": "[0.38.0, )"

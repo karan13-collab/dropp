@@ -1,50 +1,85 @@
-using System;
-using System.Collections.Generic;
-using System.IO;
-using System.Linq;
-using System.Runtime.InteropServices.WindowsRuntime;
+using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Data;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
+using Microsoft.UI.Xaml.Media.Imaging;
 using Microsoft.UI.Xaml.Navigation;
+using QRCoder;
+using System;
+using System.Collections.Generic;
+using System.ComponentModel.Design;
+using System.IO;
+using System.Linq;
+using System.Runtime.InteropServices.WindowsRuntime;
+using System.Windows.Input;
 using Windows.Foundation;
 using Windows.Foundation.Collections;
 using Windows.Storage.Pickers;
-using Microsoft.UI.Xaml.Media.Imaging;
-using QRCoder;
-
-// To learn more about WinUI, the WinUI project structure,
-// and more about our project templates, see: http://aka.ms/winui-project-info.
 
 namespace dropp.Windows
 {
-    /// <summary>
-    /// An empty window that can be used on its own or navigated to within a Frame.
-    /// </summary>
     public sealed partial class MainWindow : Window
     {
+        private AppWindow _appWindow;
+
+        // 1. MUST BE AT CLASS LEVEL: Define the commands so XAML can see them
+        public ICommand TrayDoubleClickCommand { get; }
+        public ICommand OpenAppCommand { get; }
+        public ICommand QuitAppCommand { get; }
+
         public MainWindow()
         {
+            // 2. Initialize the commands
+            TrayDoubleClickCommand = new StandardCommand(() =>
+            {
+                _appWindow?.Show(); // Added ? to fix the null warning
+                this.Activate();
+            });
+
+            OpenAppCommand = new StandardCommand(() =>
+            {
+                _appWindow?.Show();
+                this.Activate();
+            });
+
+            QuitAppCommand = new StandardCommand(() =>
+            {
+                Environment.Exit(0);
+            });
+
             this.InitializeComponent();
             ShowPairingQrCode();
+
+            // 3. Setup the AppWindow
+            IntPtr hWnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
+            Microsoft.UI.WindowId windowId = Microsoft.UI.Win32Interop.GetWindowIdFromWindow(hWnd);
+            _appWindow = AppWindow.GetFromWindowId(windowId);
+
+            _appWindow.Closing += AppWindow_Closing;
         }
+
+        private void AppWindow_Closing(AppWindow sender, AppWindowClosingEventArgs args)
+        {
+            args.Cancel = true;
+            _appWindow?.Hide();
+        }
+
         private void ShowPairingQrCode()
         {
-            // 1. Generate the QR Code data
             QRCodeGenerator qrGenerator = new QRCodeGenerator();
             QRCodeData qrCodeData = qrGenerator.CreateQrCode(App.MasterKey, QRCodeGenerator.ECCLevel.L);
             PngByteQRCode qrCode = new PngByteQRCode(qrCodeData);
             byte[] qrCodeBytes = qrCode.GetGraphic(20);
 
-            // 2. Save temporarily and load into the UI (safest method for WinUI 3)
             string tempFile = Path.Combine(global::Windows.Storage.ApplicationData.Current.TemporaryFolder.Path, "pairing_qr.png");
             File.WriteAllBytes(tempFile, qrCodeBytes);
 
             QrCodeImage.Source = new BitmapImage(new Uri(tempFile));
         }
+
         private async void TestSendFile_Click(object sender, RoutedEventArgs e)
         {
             // 1. Create the File Picker
@@ -71,5 +106,19 @@ namespace dropp.Windows
                 System.Diagnostics.Debug.WriteLine("[UI] User canceled file selection.");
             }
         }
+    }
+
+    // Command Helper Class
+    public class StandardCommand : ICommand
+    {
+        private readonly Action _action;
+        public StandardCommand(Action action) { _action = action; }
+
+#pragma warning disable CS0067 // Safely ignores the "event never used" warning
+        public event EventHandler? CanExecuteChanged;
+#pragma warning restore CS0067
+
+        public bool CanExecute(object? parameter) => true;
+        public void Execute(object? parameter) => _action();
     }
 }
