@@ -1,50 +1,56 @@
 package com.dropp.dropp.core.networking
 
+import android.content.Context
 import android.util.Log
+import com.dropp.dropp.core.security.EncryptionHelper
+import com.dropp.dropp.core.security.SecurityManager
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import java.io.OutputStreamWriter
 import java.io.PrintWriter
+import java.net.InetSocketAddress
 import java.net.Socket
+import java.nio.charset.StandardCharsets
 
 object CommandTransferManager {
-    // This will be set by your mDNS discovery when it finds the Windows PC
     var targetWindowsIp: String? = null
+    private const val COMMAND_PORT = 8767
+    private const val CONNECT_TIMEOUT_MS = 5000
 
-    // We use a different port (8081) for commands so it doesn't interfere with files
-    private const val COMMAND_PORT = 8081
+    fun sendCommand(context: Context, jsonPayload: String) {
+        val ip = targetWindowsIp ?: context.getSharedPreferences("dropp_prefs", Context.MODE_PRIVATE)
+            .getString("last_windows_ip", null)
 
-    fun sendCommand(jsonPayload: String) {
-        val ip = targetWindowsIp
-        if (ip == null) {
+        if (ip.isNullOrBlank()) {
             Log.e("dropp", "Cannot send command: Windows IP not discovered yet!")
             return
         }
 
-        // --- NEW: A strict error handler to catch silent coroutine deaths ---
-        val handler = kotlinx.coroutines.CoroutineExceptionHandler { _, exception ->
-            Log.e("dropp", "FATAL Coroutine Crash: ${exception.message}", exception)
+        val masterKey = SecurityManager.getKey(context)
+        if (masterKey.isEmpty()) {
+            Log.e("dropp", "Cannot send command: MasterKey is not set! Please pair via QR code first.")
+            return
         }
 
-        // Add the handler to the coroutine launch
+        val handler = CoroutineExceptionHandler { _, exception ->
+            Log.e("dropp", "FATAL Coroutine Crash in CommandTransferManager: ${exception.message}", exception)
+        }
+
         CoroutineScope(Dispatchers.IO + handler).launch {
             try {
                 Log.d("dropp", "Connecting to Windows at $ip:$COMMAND_PORT...")
-                Socket(ip, COMMAND_PORT).use { socket ->
-                    val out = PrintWriter(socket.getOutputStream(), true)
-
-                    // --- SECURITY: Encrypt the payload before sending! ---
-                    val encryptedPayload = com.dropp.dropp.core.security.EncryptionHelper.encrypt(
-                        jsonPayload,
-                        com.dropp.dropp.core.security.SecurityManager.MASTER_KEY
-                    )
-
-                    out.println(encryptedPayload) // Send the scrambled text over the network
-                    Log.d("dropp", "Encrypted command successfully sent to Windows!")
+                Socket().use { socket ->
+                    socket.connect(InetSocketAddress(ip, COMMAND_PORT), CONNECT_TIMEOUT_MS)
+                    val writer = PrintWriter(OutputStreamWriter(socket.getOutputStream(), StandardCharsets.UTF_8), true)
+                    val encryptedPayload = EncryptionHelper.encrypt(jsonPayload, masterKey)
+                    writer.println(encryptedPayload)
+                    Log.d("dropp", "Encrypted command successfully sent to Windows ($ip:$COMMAND_PORT)!")
                 }
             } catch (e: Exception) {
-                Log.e("dropp", "Network Failed to send command: ${e.message}", e)
+                Log.e("dropp", "Network Failed to send command to $ip:$COMMAND_PORT: ${e.message}", e)
             }
         }
     }
-}
+}

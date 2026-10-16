@@ -1,35 +1,38 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Net;
 using System.Net.Sockets;
 using System.Text;
 using System.Threading.Tasks;
+using dropp.Windows.Core.Diagnostics;
 
 namespace dropp.Windows.Services
 {
     public class FileTransferService
     {
-        private const int FilePort = 8767;
+        private const int FilePort = 5555;
         public string _targetIp { get; set; } = "";
 
         public void SetTargetIp(string ip)
         {
+            if (string.IsNullOrWhiteSpace(ip) || _targetIp == ip) return;
             _targetIp = ip;
-            Debug.WriteLine($"[FileTransfer] Target IP set to {_targetIp}");
+            AppLogger.Log("FileTransfer", $"Target IP set to {_targetIp}");
         }
 
         public async Task SendFileAsync(string filePath)
         {
             if (string.IsNullOrEmpty(_targetIp))
             {
-                Debug.WriteLine("[FileTransfer] Target IP is not set. Cannot send file.");
+                AppLogger.Log("FileTransfer", "Target IP is not set. Cannot send file.");
                 return;
             }
 
             if (!File.Exists(filePath))
             {
-                Debug.WriteLine($"[FileTransfer] File does not exist: {filePath}");
+                AppLogger.Log("FileTransfer", $"File does not exist: {filePath}");
                 return;
             }
 
@@ -39,7 +42,7 @@ namespace dropp.Windows.Services
                 string fileName = fileInfo.Name;
                 long fileSize = fileInfo.Length;
 
-                Debug.WriteLine($"[FileTransfer] Preparing to send: {fileName} ({fileSize} bytes)");
+                AppLogger.Log("FileTransfer", $"Preparing to send: {fileName} ({fileSize} bytes) to {_targetIp}");
 
                 using var client = new TcpClient();
                 await client.ConnectAsync(_targetIp, FilePort);
@@ -49,6 +52,7 @@ namespace dropp.Windows.Services
                 string header = $"FILENAME:{fileName}|SIZE:{fileSize}\n";
                 byte[] headerBytes = Encoding.UTF8.GetBytes(header);
                 await netStream.WriteAsync(headerBytes, 0, headerBytes.Length);
+                await netStream.FlushAsync();
 
                 // 2. Stream the file in 64KB chunks
                 using var fileStream = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.Read);
@@ -60,18 +64,17 @@ namespace dropp.Windows.Services
                 {
                     await netStream.WriteAsync(buffer, 0, bytesRead);
                     totalSent += bytesRead;
-
-                    // (Later we will add UI progress bar updates right here using totalSent / fileSize)
                 }
 
                 await netStream.FlushAsync();
-                Debug.WriteLine($"[FileTransfer] Successfully sent 100% of {fileName}!");
+                AppLogger.Log("FileTransfer", $"Successfully sent 100% of {fileName}!");
             }
             catch (Exception ex)
             {
-                Debug.WriteLine($"[FileTransfer] Transfer failed: {ex.Message}");
+                AppLogger.Log("FileTransfer", $"Transfer failed: {ex.Message}");
             }
         }
+
         public void Start()
         {
             Task.Run(ListenForIncomingFilesAsync);
@@ -79,23 +82,30 @@ namespace dropp.Windows.Services
 
         private async Task ListenForIncomingFilesAsync()
         {
-            var listener = new TcpListener(System.Net.IPAddress.Any, FilePort);
+            var listener = new TcpListener(IPAddress.Any, FilePort);
             listener.Start();
-            Debug.WriteLine($"[FileTransfer] Windows Receiver listening on port {FilePort}");
+            AppLogger.Log("FileTransfer", $"Windows Receiver listening on port {FilePort}");
 
             while (true)
             {
                 try
                 {
-                    // 1. Wait for a new connection (Blocks here until Android sends a file)
+                    // 1. Wait for a new connection
                     var client = await listener.AcceptTcpClientAsync();
+
+                    // Learn the peer IP automatically from incoming connection
+                    if (client.Client.RemoteEndPoint is IPEndPoint remoteEndPoint)
+                    {
+                        string peerIp = remoteEndPoint.Address.ToString();
+                        SetTargetIp(peerIp);
+                        App.ClipboardService?.SetTargetIp(peerIp);
+                    }
 
                     // 2. Fire and Forget! Handle the downloading on a separate background thread
                     _ = Task.Run(async () =>
                     {
                         try
                         {
-                            // We wrap these in using blocks here so they safely close when the thread finishes
                             using (client)
                             using (var stream = client.GetStream())
                             {
@@ -108,15 +118,15 @@ namespace dropp.Windows.Services
                                     headerBuffer.Add((byte)b);
                                 }
 
-                                string header = Encoding.UTF8.GetString(headerBuffer.ToArray());
+                                string header = Encoding.UTF8.GetString(headerBuffer.ToArray()).Trim();
                                 if (string.IsNullOrEmpty(header)) return;
 
-                                // 2. Parse the Header
+                                // 2. Parse the Header safely
                                 string[] parts = header.Split('|');
-                                string fileName = parts[0].Split(':')[1];
-                                long fileSize = long.Parse(parts[1].Split(':')[1]);
+                                string fileName = parts[0].Substring(parts[0].IndexOf(':') + 1).Trim();
+                                long fileSize = long.Parse(parts[1].Substring(parts[1].IndexOf(':') + 1).Trim());
 
-                                Debug.WriteLine($"[FileTransfer] Incoming file detected: {fileName} ({fileSize} bytes)");
+                                AppLogger.Log("FileTransfer", $"Incoming file detected: {fileName} ({fileSize} bytes)");
 
                                 // 3. Create the "Downloads/dropp" directory safely
                                 string downloadsPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads", "dropp");
@@ -139,18 +149,18 @@ namespace dropp.Windows.Services
                                     totalRead += read;
                                 }
 
-                                Debug.WriteLine($"[FileTransfer] Successfully received 100% of {fileName}!");
+                                AppLogger.Log("FileTransfer", $"Successfully received 100% of {fileName}!");
                             }
                         }
                         catch (Exception ex)
                         {
-                            Debug.WriteLine($"[FileTransfer] Error during background transfer: {ex.Message}");
+                            AppLogger.Log("FileTransfer", $"Error during background transfer: {ex.Message}");
                         }
                     });
                 }
                 catch (Exception ex)
                 {
-                    Debug.WriteLine($"[FileTransfer] Listener error: {ex.Message}");
+                    AppLogger.Log("FileTransfer", $"Listener error: {ex.Message}");
                 }
             }
         }

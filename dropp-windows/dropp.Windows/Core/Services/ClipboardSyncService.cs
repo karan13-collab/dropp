@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
@@ -157,6 +157,14 @@ namespace dropp.Windows.Services
                 try
                 {
                     using var client = await listener.AcceptTcpClientAsync();
+
+                    if (client.Client.RemoteEndPoint is IPEndPoint remoteEndPoint)
+                    {
+                        string peerIp = remoteEndPoint.Address.ToString();
+                        SetTargetIp(peerIp);
+                        App.FileTransfer?.SetTargetIp(peerIp);
+                    }
+
                     using var stream = client.GetStream();
 
                     // Read Header byte-by-byte so we don't consume binary data
@@ -168,12 +176,12 @@ namespace dropp.Windows.Services
                         headerBuffer.Add((byte)b);
                     }
 
-                    string header = Encoding.UTF8.GetString(headerBuffer.ToArray());
+                    string header = Encoding.UTF8.GetString(headerBuffer.ToArray()).Trim();
                     if (string.IsNullOrEmpty(header)) continue;
 
                     string[] parts = header.Split('|');
-                    string type = parts[0].Split(':')[1];
-                    int size = int.Parse(parts[1].Split(':')[1]);
+                    string type = parts[0].Substring(parts[0].IndexOf(':') + 1).Trim();
+                    int size = int.Parse(parts[1].Substring(parts[1].IndexOf(':') + 1).Trim());
 
                     // Read exact payload bytes
                     byte[] payload = new byte[size];

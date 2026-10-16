@@ -51,7 +51,7 @@ class NsdHelper(private val context: Context) {
             override fun onServiceFound(service: NsdServiceInfo) {
                 Log.d(TAG, "Service found: ${service.serviceName}")
 
-                if (service.serviceType == serviceType && service.serviceName.contains("dropp_windows")) {
+                if (service.serviceType.contains("_dropp._tcp") && service.serviceName.contains("dropp_windows")) {
                     nsdManager.resolveService(service, object : NsdManager.ResolveListener {
                         override fun onResolveFailed(serviceInfo: NsdServiceInfo, errorCode: Int) {
                             Log.e(TAG, "Resolve failed: $errorCode")
@@ -61,8 +61,14 @@ class NsdHelper(private val context: Context) {
                             val hostAddress = serviceInfo.host.hostAddress
                             Log.d(TAG, "Found Windows PC at $hostAddress:${serviceInfo.port}")
 
-                            // --- NEW: Feed the IP to the Command engine ---
+                            // Feed memory
                             com.dropp.dropp.core.networking.CommandTransferManager.targetWindowsIp = hostAddress
+
+                            // NEW: Save to physical disk so the Notification Service can survive app closures!
+                            context.getSharedPreferences("dropp_prefs", Context.MODE_PRIVATE)
+                                .edit()
+                                .putString("last_windows_ip", hostAddress)
+                                .apply()
 
                             onIpResolved(hostAddress)
                         }

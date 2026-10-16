@@ -75,6 +75,7 @@ class DroppBackgroundService : Service() {
         fileTransferManager = FileTransferManager(this)
         Companion.fileTransferManager = this.fileTransferManager
         fileTransferManager.start()
+        com.dropp.dropp.core.security.SecurityManager.init(this)
         com.dropp.dropp.core.networking.CommandReceiverService.startListening(this)
         // 3. Initialize Networking
         nsdHelper = NsdHelper(this)
@@ -84,6 +85,7 @@ class DroppBackgroundService : Service() {
         nsdHelper.startDiscovering { ipAddress ->
             clipboardSyncManager.setTargetIp(ipAddress)
             fileTransferManager.setTargetIp(ipAddress)
+            com.dropp.dropp.core.networking.CommandTransferManager.targetWindowsIp = ipAddress
         }
     }
 

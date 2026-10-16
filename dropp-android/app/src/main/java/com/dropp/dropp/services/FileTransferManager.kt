@@ -8,29 +8,37 @@ import android.provider.MediaStore
 import android.util.Log
 import kotlinx.coroutines.*
 import java.io.ByteArrayOutputStream
+import java.net.InetSocketAddress
 import java.net.ServerSocket
+import java.net.Socket
 
 class FileTransferManager(private val context: Context) {
     private val TAG = "FileTransfer"
-    private val FILE_PORT = 8767
+    private val FILE_PORT = 5555
     private val scope = CoroutineScope(Dispatchers.IO + Job())
 
     fun start() {
         scope.launch { listenForIncomingFiles() }
         Log.d(TAG, "File Transfer Server listening on port $FILE_PORT")
     }
+
     private var targetIp: String? = null
 
     fun setTargetIp(ip: String) {
+        if (ip.isBlank()) return
         this.targetIp = ip
         Log.d(TAG, "Target IP set to $ip")
     }
 
     fun sendFile(fileUri: Uri) {
-        if (targetIp == null) {
-            Log.e(TAG, "Target IP is null. Cannot send file.")
+        val activeIp = targetIp ?: context.getSharedPreferences("dropp_prefs", Context.MODE_PRIVATE)
+            .getString("last_windows_ip", null)
+
+        if (activeIp.isNullOrBlank()) {
+            Log.e(TAG, "Target IP is null and no cached IP found. Cannot send file.")
             return
         }
+        targetIp = activeIp
 
         scope.launch {
             withContext(Dispatchers.IO) {
@@ -53,13 +61,16 @@ class FileTransferManager(private val context: Context) {
                         return@withContext
                     }
 
-                    Log.d(TAG, "Preparing to send: $fileName ($fileSize bytes)")
+                    Log.d(TAG, "Preparing to send: $fileName ($fileSize bytes) to $activeIp")
 
-                    // 2. Connect to Windows and send the Header
-                    java.net.Socket(targetIp, FILE_PORT).use { socket ->
-                        val outStream = socket.getOutputStream()
+                    // 2. Connect to Windows with a 4-second timeout and send Header
+                    val socket = Socket()
+                    socket.connect(InetSocketAddress(activeIp, FILE_PORT), 4000)
+                    socket.use { sock ->
+                        val outStream = sock.getOutputStream()
                         val header = "FILENAME:$fileName|SIZE:$fileSize\n".toByteArray(Charsets.UTF_8)
                         outStream.write(header)
+                        outStream.flush()
 
                         // 3. Stream the raw bytes in 64KB chunks
                         context.contentResolver.openInputStream(fileUri)?.use { inputStream ->
@@ -73,7 +84,7 @@ class FileTransferManager(private val context: Context) {
                             }
 
                             outStream.flush()
-                            Log.d(TAG, "Successfully sent 100% of $fileName to Windows!")
+                            Log.d(TAG, "Successfully sent 100% of $fileName to Windows ($activeIp)!")
                         }
                     }
                 } catch (e: Exception) {
@@ -82,12 +93,25 @@ class FileTransferManager(private val context: Context) {
             }
         }
     }
+
     private suspend fun listenForIncomingFiles() {
         withContext(Dispatchers.IO) {
             try {
                 ServerSocket(FILE_PORT).use { serverSocket ->
                     while (isActive) {
                         val socket = serverSocket.accept()
+
+                        // Auto-learn Windows PC IP from incoming connection
+                        val remoteIp = socket.inetAddress?.hostAddress
+                        if (!remoteIp.isNullOrBlank()) {
+                            Log.d(TAG, "Auto-learned Windows IP from incoming transfer: $remoteIp")
+                            setTargetIp(remoteIp)
+                            DroppBackgroundService.clipboardManager?.setTargetIp(remoteIp)
+                            com.dropp.dropp.core.networking.CommandTransferManager.targetWindowsIp = remoteIp
+                            context.getSharedPreferences("dropp_prefs", Context.MODE_PRIVATE)
+                                .edit().putString("last_windows_ip", remoteIp).apply()
+                        }
+
                         launch {
                             try {
                                 val inputStream = socket.getInputStream()
@@ -100,13 +124,13 @@ class FileTransferManager(private val context: Context) {
                                     headerBytes.write(b)
                                 }
 
-                                val header = headerBytes.toString("UTF-8")
+                                val header = headerBytes.toString("UTF-8").trim()
                                 if (header.isEmpty()) return@launch
 
                                 // 2. Parse Header (e.g., FILENAME:video.mp4|SIZE:524288000)
                                 val parts = header.split("|")
-                                val fileName = parts[0].split(":")[1]
-                                val fileSize = parts[1].split(":")[1].toLong()
+                                val fileName = parts[0].substringAfter(":")
+                                val fileSize = parts[1].substringAfter(":").toLong()
 
                                 Log.d(TAG, "Incoming File Detected: $fileName ($fileSize bytes)")
 
@@ -133,8 +157,6 @@ class FileTransferManager(private val context: Context) {
 
                                             outputStream.write(buffer, 0, read)
                                             totalRead += read
-
-                                            // (Later: Update UI progress bar here using totalRead / fileSize)
                                         }
 
                                         outputStream.flush()

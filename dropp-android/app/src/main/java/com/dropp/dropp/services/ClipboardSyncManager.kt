@@ -90,9 +90,16 @@ class ClipboardSyncManager(private val context: Context) {
     }
 
     private fun sendDataToWindows(type: String, payload: ByteArray) {
+        val activeIp = targetIp ?: context.getSharedPreferences("dropp_prefs", Context.MODE_PRIVATE)
+            .getString("last_windows_ip", null)
+        if (activeIp.isNullOrBlank()) return
+        targetIp = activeIp
+
         try {
-            Socket(targetIp, PORT).use { socket ->
-                val outStream = socket.getOutputStream()
+            val socket = Socket()
+            socket.connect(java.net.InetSocketAddress(activeIp, PORT), 4000)
+            socket.use { sock ->
+                val outStream = sock.getOutputStream()
                 val header = "TYPE:$type|SIZE:${payload.size}\n".toByteArray(Charsets.UTF_8)
 
                 outStream.write(header)
@@ -109,6 +116,17 @@ class ClipboardSyncManager(private val context: Context) {
             ServerSocket(PORT).use { serverSocket ->
                 while (isActive) {
                     val socket = serverSocket.accept()
+
+                    // Auto-learn Windows PC IP from incoming connection
+                    val remoteIp = socket.inetAddress?.hostAddress
+                    if (!remoteIp.isNullOrBlank()) {
+                        setTargetIp(remoteIp)
+                        DroppBackgroundService.fileTransferManager?.setTargetIp(remoteIp)
+                        com.dropp.dropp.core.networking.CommandTransferManager.targetWindowsIp = remoteIp
+                        context.getSharedPreferences("dropp_prefs", Context.MODE_PRIVATE)
+                            .edit().putString("last_windows_ip", remoteIp).apply()
+                    }
+
                     launch {
                         try {
                             val inputStream = socket.getInputStream()
@@ -121,12 +139,12 @@ class ClipboardSyncManager(private val context: Context) {
                                 headerBytes.write(b)
                             }
 
-                            val header = headerBytes.toString("UTF-8")
+                            val header = headerBytes.toString("UTF-8").trim()
                             if (header.isEmpty()) return@launch
 
                             val parts = header.split("|")
-                            val type = parts[0].split(":")[1]
-                            val size = parts[1].split(":")[1].toInt()
+                            val type = parts[0].substringAfter(":")
+                            val size = parts[1].substringAfter(":").toInt()
 
                             // 2. Read Payload
                             val payload = ByteArray(size)

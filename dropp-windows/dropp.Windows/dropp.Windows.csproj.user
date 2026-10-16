@@ -4,7 +4,7 @@
     <DebuggerFlavor>ProjectDebugger</DebuggerFlavor>
   </PropertyGroup>
   <PropertyGroup>
-    <ActiveDebugProfile>dropp.Windows (Unpackaged)</ActiveDebugProfile>
+    <ActiveDebugProfile>dropp.Windows (Package)</ActiveDebugProfile>
   </PropertyGroup>
   <ItemGroup>
     <None Update="App.xaml">

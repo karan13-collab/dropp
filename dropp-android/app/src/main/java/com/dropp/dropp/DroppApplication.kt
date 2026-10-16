@@ -9,6 +9,7 @@ import android.util.Log
 class DroppApplication : Application() {
     override fun onCreate() {
         super.onCreate()
+        com.dropp.dropp.core.security.SecurityManager.init(this)
         createNotificationChannels()
     }
 
