@@ -28,12 +28,27 @@ namespace dropp.Windows
                 {
                     try
                     {
+                        string fallbackDir = System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "dropp");
+                        System.IO.Directory.CreateDirectory(fallbackDir);
+                        string fallbackKeyPath = System.IO.Path.Combine(fallbackDir, "masterkey.txt");
                         string keyFilePath = System.IO.Path.Combine(global::Windows.Storage.ApplicationData.Current.LocalFolder.Path, "masterkey.txt");
-                        if (!System.IO.File.Exists(keyFilePath))
+
+                        if (System.IO.File.Exists(fallbackKeyPath))
                         {
-                            System.IO.File.WriteAllText(keyFilePath, Core.Security.EncryptionHelper.GeneratePairingKey());
+                            _masterKey = System.IO.File.ReadAllText(fallbackKeyPath).Trim();
+                            try { System.IO.File.WriteAllText(keyFilePath, _masterKey); } catch { }
                         }
-                        _masterKey = System.IO.File.ReadAllText(keyFilePath).Trim();
+                        else if (System.IO.File.Exists(keyFilePath))
+                        {
+                            _masterKey = System.IO.File.ReadAllText(keyFilePath).Trim();
+                            try { System.IO.File.WriteAllText(fallbackKeyPath, _masterKey); } catch { }
+                        }
+                        else
+                        {
+                            _masterKey = Core.Security.EncryptionHelper.GeneratePairingKey();
+                            try { System.IO.File.WriteAllText(keyFilePath, _masterKey); } catch { }
+                            try { System.IO.File.WriteAllText(fallbackKeyPath, _masterKey); } catch { }
+                        }
                     }
                     catch { }
                 }
@@ -187,6 +202,7 @@ namespace dropp.Windows
                 ClipboardService.Start();
                 FileTransfer?.Start();
                 CommandReceiver.Start();
+                CallAudioBridgeService.Instance.StartListener();
 
                 m_window.Activate();
 
@@ -472,6 +488,27 @@ namespace dropp.Windows
                     bool sent = await CommandReceiverService.SendCommandAsync(payload.ToJsonString());
                     AppLogger.Log("NotificationActivation", $"Action button send result: {sent}");
                     return sent;
+                }
+                else if (string.Equals(actionType, "CALL_ANSWER", StringComparison.OrdinalIgnoreCase))
+                {
+                    AppLogger.Log("CallActivation", "User clicked 'Answer on PC' on toast.");
+                    // Call audio will be routed via Bluetooth SCO/HFP from Android
+                    try
+                    {
+                        await Microsoft.Windows.AppNotifications.AppNotificationManager.Default.RemoveByTagAsync("active_call");
+                    }
+                    catch { }
+                    return await CommandReceiverService.SendCallCommandAsync("CALL_ANSWER");
+                }
+                else if (string.Equals(actionType, "CALL_REJECT", StringComparison.OrdinalIgnoreCase))
+                {
+                    AppLogger.Log("CallActivation", "User clicked 'Decline' on toast.");
+                    try
+                    {
+                        await Microsoft.Windows.AppNotifications.AppNotificationManager.Default.RemoveByTagAsync("active_call");
+                    }
+                    catch { }
+                    return await CommandReceiverService.SendCallCommandAsync("CALL_REJECT");
                 }
                 else
                 {

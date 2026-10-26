@@ -262,6 +262,10 @@ class NotificationSyncService : NotificationListenerService() {
         super.onCreate()
         instance = this
         SecurityManager.init(this)
+        try {
+            val serviceIntent = Intent(this, DroppBackgroundService::class.java)
+            androidx.core.content.ContextCompat.startForegroundService(this, serviceIntent)
+        } catch (_: Exception) {}
         Log.d("dropp", "NotificationSyncService created and bound.")
     }
 
@@ -280,6 +284,23 @@ class NotificationSyncService : NotificationListenerService() {
         // Filter out dropp itself to prevent loops
         if (packageName == this.packageName || packageName == "com.dropp.dropp") {
             return
+        }
+
+        // Detect incoming phone call notifications and pass to CallPassthroughManager
+        val hasCallAction = sbn.notification.actions?.any { act ->
+            val t = act.title?.toString()?.lowercase() ?: ""
+            t.contains("answer") || t.contains("accept") || t.contains("decline") || t.contains("hang up")
+        } == true
+
+        val isCallNotification = sbn.notification.category == Notification.CATEGORY_CALL ||
+                hasCallAction ||
+                packageName.contains("dialer") ||
+                packageName.contains("telecom") ||
+                packageName.contains("incallui") ||
+                packageName.contains("phone")
+
+        if (isCallNotification) {
+            CallPassthroughManager.onCallNotification(this, sbn)
         }
 
         // Filter out ongoing notifications (media players, persistent foreground services) and group summaries
@@ -387,6 +408,7 @@ class NotificationSyncService : NotificationListenerService() {
     override fun onNotificationRemoved(sbn: StatusBarNotification) {
         cachedNotifications.remove(sbn.key)
         activeActions.keys.removeIf { it.startsWith(sbn.key) }
+        CallPassthroughManager.onCallNotificationRemoved(this, sbn)
 
         try {
             val payload = JSONObject().apply {

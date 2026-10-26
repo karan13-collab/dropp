@@ -77,6 +77,9 @@ class DroppBackgroundService : Service() {
         fileTransferManager.start()
         com.dropp.dropp.core.security.SecurityManager.init(this)
         com.dropp.dropp.core.networking.CommandReceiverService.startListening(this)
+        // Initialize and start Call Passthrough Manager
+        CallPassthroughManager.start(this)
+
         // 3. Initialize Networking
         nsdHelper = NsdHelper(this)
         nsdHelper.startBroadcasting()
@@ -91,6 +94,7 @@ class DroppBackgroundService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
+        CallPassthroughManager.stop(this)
         // Safely unregister the observer when the app stops
         contentResolver.unregisterContentObserver(mediaObserver)
     }

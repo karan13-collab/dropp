@@ -7,6 +7,8 @@ import com.dropp.dropp.core.security.SecurityManager
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import java.io.OutputStreamWriter
 import java.io.PrintWriter
@@ -15,7 +17,25 @@ import java.net.Socket
 import java.nio.charset.StandardCharsets
 
 object CommandTransferManager {
-    var targetWindowsIp: String? = null
+    private val _targetWindowsIp = MutableStateFlow<String?>(null)
+    val targetWindowsIpFlow = _targetWindowsIp.asStateFlow()
+
+    var targetWindowsIp: String?
+        get() = _targetWindowsIp.value
+        set(value) {
+            _targetWindowsIp.value = value
+        }
+
+    fun init(context: Context) {
+        if (_targetWindowsIp.value.isNullOrBlank()) {
+            val savedIp = context.getSharedPreferences("dropp_prefs", Context.MODE_PRIVATE)
+                .getString("last_windows_ip", null)
+            if (!savedIp.isNullOrBlank()) {
+                _targetWindowsIp.value = savedIp
+            }
+        }
+    }
+
     private const val COMMAND_PORT = 8767
     private const val CONNECT_TIMEOUT_MS = 5000
 

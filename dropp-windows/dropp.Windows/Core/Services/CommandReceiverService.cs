@@ -13,9 +13,18 @@ using dropp.Windows.Core.Diagnostics;
 
 namespace dropp.Windows.Services
 {
+    public class CallEventArgs : EventArgs
+    {
+        public string State { get; set; } = "IDLE";
+        public string PhoneNumber { get; set; } = "";
+        public string CallerName { get; set; } = "";
+        public long Timestamp { get; set; }
+    }
+
     public class CommandReceiverService
     {
         public const int CommandPort = 8767;
+        public static event EventHandler<CallEventArgs>? CallEventReceived;
         private TcpListener? _listener;
 
         private static string? _targetAndroidIp;
@@ -312,11 +321,118 @@ namespace dropp.Windows.Services
                         AppLogger.Log("CommandReceiver", $"Dismissed toast for key: {notificationKey} (tag: {safeTag})");
                     }
                 }
+                else if (type == "CALL_EVENT")
+                {
+                    string state = (json["state"] ?? json["State"])?.ToString()?.ToUpperInvariant() ?? "IDLE";
+                    string phoneNumber = (json["phoneNumber"] ?? json["PhoneNumber"])?.ToString() ?? "";
+                    string callerName = (json["callerName"] ?? json["CallerName"])?.ToString() ?? "";
+                    long timestamp = (json["timestamp"] ?? json["Timestamp"])?.GetValue<long>() ?? DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+
+                    var callArgs = new CallEventArgs
+                    {
+                        State = state,
+                        PhoneNumber = phoneNumber,
+                        CallerName = string.IsNullOrWhiteSpace(callerName) ? phoneNumber : callerName,
+                        Timestamp = timestamp
+                    };
+
+                    AppLogger.Log("CommandReceiver", $"Received CALL_EVENT: State={state}, Caller={callArgs.CallerName}, Number={phoneNumber}");
+                    CallEventReceived?.Invoke(null, callArgs);
+
+                    if (state == "RINGING")
+                    {
+                        var callBuilder = new AppNotificationBuilder();
+                        callBuilder.AddText($"Incoming Call: {callArgs.CallerName}");
+                        if (!string.IsNullOrWhiteSpace(phoneNumber) && phoneNumber != callArgs.CallerName)
+                        {
+                            callBuilder.AddText(phoneNumber);
+                        }
+                        callBuilder.AddText("Cellular call ringing on phone");
+
+                        callBuilder.AddButton(new AppNotificationButton("Answer on PC")
+                            .AddArgument("actionType", "CALL_ANSWER"));
+
+                        callBuilder.AddButton(new AppNotificationButton("Decline")
+                            .AddArgument("actionType", "CALL_REJECT"));
+
+                        var notification = callBuilder.BuildNotification();
+                        notification.Tag = "active_call";
+                        notification.Group = "calls";
+                        AppNotificationManager.Default.Show(notification);
+                        AppLogger.Log("CommandReceiver", "Displayed incoming call toast notification.");
+                    }
+                    else if (state == "ACTIVE")
+                    {
+                        try
+                        {
+                            await AppNotificationManager.Default.RemoveByTagAsync("active_call");
+                        }
+                        catch { }
+
+                        // Call audio is routed via Bluetooth SCO/HFP natively from Android.
+                        // No TCP audio bridge or A2DP sink manipulation needed.
+                        AppLogger.Log("CommandReceiver", "Call ACTIVE -> Audio routed via Bluetooth HFP to PC.");
+                    }
+                    else if (state == "ENDED")
+                    {
+                        try
+                        {
+                            await AppNotificationManager.Default.RemoveByTagAsync("active_call");
+                        }
+                        catch { }
+
+                        AppLogger.Log("CommandReceiver", "Call ENDED.");
+                    }
+                }
+                else if (type == "AUDIO_ROUTING")
+                {
+                    string action = (json["action"] ?? json["Action"])?.ToString()?.ToUpperInvariant() ?? "";
+                    AppLogger.Log("CommandReceiver", $"Received AUDIO_ROUTING command: {action}");
+
+                    if (action == "ENABLE" || action == "OPEN")
+                    {
+                        BluetoothAudioSinkService.Instance.EnableAudioRouting();
+                        // Status will be reported asynchronously by BluetoothAudioSinkService when link becomes active
+                    }
+                    else if (action == "DISABLE" || action == "CLOSE")
+                    {
+                        BluetoothAudioSinkService.Instance.DisableAudioRouting();
+                        await SendAudioRoutingStatusAsync(false);
+                    }
+                    else if (action == "STATUS" || action == "QUERY")
+                    {
+                        await SendAudioRoutingStatusAsync(BluetoothAudioSinkService.Instance.IsRoutingEnabled && BluetoothAudioSinkService.Instance.IsSinkActive);
+                    }
+                }
             }
             catch (Exception ex)
             {
                 AppLogger.Log("CommandReceiver", $"JSON Parse / Toast Error: {ex.Message}");
             }
+        }
+
+        public static async Task<bool> SendAudioRoutingStatusAsync(bool isEnabled)
+        {
+            var payload = new JsonObject
+            {
+                ["type"] = "AUDIO_ROUTING_STATUS",
+                ["Type"] = "AUDIO_ROUTING_STATUS",
+                ["enabled"] = isEnabled,
+                ["Enabled"] = isEnabled
+            };
+            return await SendCommandAsync(payload.ToJsonString());
+        }
+
+        public static async Task<bool> SendCallCommandAsync(string action)
+        {
+            var payload = new JsonObject
+            {
+                ["type"] = "CALL_COMMAND",
+                ["Type"] = "CALL_COMMAND",
+                ["action"] = action,
+                ["Action"] = action
+            };
+            return await SendCommandAsync(payload.ToJsonString());
         }
 
         public static async Task<bool> SendCommandAsync(string jsonPayload)

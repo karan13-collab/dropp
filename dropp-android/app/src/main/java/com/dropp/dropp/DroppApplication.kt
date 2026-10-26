@@ -7,10 +7,23 @@ import android.os.Build
 import android.util.Log
 
 class DroppApplication : Application() {
+    companion object {
+        @Volatile
+        var appContext: Application? = null
+            private set
+    }
+
     override fun onCreate() {
         super.onCreate()
+        appContext = this
         com.dropp.dropp.core.security.SecurityManager.init(this)
         createNotificationChannels()
+        try {
+            val intent = android.content.Intent(this, com.dropp.dropp.services.DroppBackgroundService::class.java)
+            androidx.core.content.ContextCompat.startForegroundService(this, intent)
+        } catch (e: Exception) {
+            Log.w("DroppApplication", "Could not start DroppBackgroundService: ${e.message}")
+        }
     }
 
     private fun createNotificationChannels() {

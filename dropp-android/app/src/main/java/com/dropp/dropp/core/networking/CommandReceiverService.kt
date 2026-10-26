@@ -157,6 +157,47 @@ object CommandReceiverService {
                     }
                 }
 
+                "CALL_COMMAND" -> {
+                    val action = (json.optString("action").ifEmpty { json.optString("Action") }).uppercase()
+                    Log.i("dropp", "Received CALL_COMMAND: action=$action")
+                    when (action) {
+                        "CALL_ANSWER", "ANSWER" -> {
+                            com.dropp.dropp.services.CallPassthroughManager.answerCall(context)
+                        }
+                        "CALL_REJECT", "REJECT", "CALL_END", "END" -> {
+                            com.dropp.dropp.services.CallPassthroughManager.rejectOrEndCall(context)
+                        }
+                        "CALL_AUDIO_START", "AUDIO_START" -> {
+                            com.dropp.dropp.services.CallPassthroughManager.startAudioBridge(context)
+                        }
+                        "CALL_AUDIO_STOP", "AUDIO_STOP" -> {
+                            com.dropp.dropp.services.CallPassthroughManager.stopAudioBridge()
+                        }
+                        "CALL_MIC_MUTE", "MIC_MUTE" -> {
+                            val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as android.media.AudioManager
+                            audioManager.isMicrophoneMute = true
+                            Log.i("dropp", "Microphone muted via CALL_MIC_MUTE command")
+                        }
+                        "CALL_MIC_UNMUTE", "MIC_UNMUTE" -> {
+                            val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as android.media.AudioManager
+                            audioManager.isMicrophoneMute = false
+                            Log.i("dropp", "Microphone unmuted via CALL_MIC_UNMUTE command")
+                        }
+                        else -> {
+                            Log.w("dropp", "Unknown CALL_COMMAND action: $action")
+                        }
+                    }
+                }
+
+                "AUDIO_ROUTING_STATUS" -> {
+                    val enabled = if (json.has("enabled")) json.optBoolean("enabled") else json.optBoolean("Enabled", false)
+                    Log.i("dropp", "Received AUDIO_ROUTING_STATUS from Windows: enabled=$enabled")
+                    com.dropp.dropp.services.AudioRoutingManager.setRoutingState(enabled)
+                    if (enabled) {
+                        com.dropp.dropp.services.AudioRoutingManager.connectA2dp(context)
+                    }
+                }
+
                 else -> {
                     Log.w("dropp", "Unknown command type received: $type")
                 }

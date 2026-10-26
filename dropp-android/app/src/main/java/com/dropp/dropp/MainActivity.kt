@@ -1,49 +1,82 @@
 package com.dropp.dropp
 
+import android.app.Activity
+import android.content.Context
 import android.content.Intent
+import android.media.projection.MediaProjectionManager
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import androidx.core.app.ActivityCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
-import com.dropp.dropp.services.DroppBackgroundService
-import com.dropp.dropp.ui.theme.DroppTheme
-import android.widget.Toast
-import androidx.compose.foundation.layout.Box
-import com.google.mlkit.vision.codescanner.GmsBarcodeScanning
-import com.google.mlkit.vision.codescanner.GmsBarcodeScannerOptions
-import com.google.mlkit.vision.barcode.common.Barcode
+import com.dropp.dropp.core.networking.CommandTransferManager
 import com.dropp.dropp.core.security.SecurityManager
-import android.os.Build
-import androidx.core.app.ActivityCompat
+import android.content.pm.PackageManager
+import android.util.Log
+import com.dropp.dropp.services.DroppBackgroundService
+import com.dropp.dropp.services.AudioRoutingManager
+import com.dropp.dropp.ui.theme.DroppTheme
+import com.google.mlkit.vision.barcode.common.Barcode
+import com.google.mlkit.vision.codescanner.GmsBarcodeScannerOptions
+import com.google.mlkit.vision.codescanner.GmsBarcodeScanning
 
 
 class MainActivity : ComponentActivity() {
+    private val permissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { permissions ->
+        permissions.entries.forEach { (perm, granted) ->
+            Log.d("MainActivity", "Permission $perm granted: $granted")
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         startDroppService()
         SecurityManager.init(this)
+        CommandTransferManager.init(this)
+        AudioRoutingManager.init(this)
+        AudioRoutingManager.queryStatus(this)
+
+        // Request runtime permissions needed for calls, Bluetooth routing, and notifications
+        requestRequiredPermissions()
 
         // Catch files if opened from the Share menu
         handleIncomingSharedFiles()
@@ -74,8 +107,39 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+    }
+
+    private fun requestRequiredPermissions() {
+        val permissionsToRequest = mutableListOf<String>()
+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            ActivityCompat.requestPermissions(this, arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 101)
+            if (ContextCompat.checkSelfPermission(this, android.Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+                permissionsToRequest.add(android.Manifest.permission.POST_NOTIFICATIONS)
+            }
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            if (ContextCompat.checkSelfPermission(this, android.Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
+                permissionsToRequest.add(android.Manifest.permission.BLUETOOTH_CONNECT)
+            }
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            if (ContextCompat.checkSelfPermission(this, android.Manifest.permission.ANSWER_PHONE_CALLS) != PackageManager.PERMISSION_GRANTED) {
+                permissionsToRequest.add(android.Manifest.permission.ANSWER_PHONE_CALLS)
+            }
+        }
+        if (ContextCompat.checkSelfPermission(this, android.Manifest.permission.READ_PHONE_STATE) != PackageManager.PERMISSION_GRANTED) {
+            permissionsToRequest.add(android.Manifest.permission.READ_PHONE_STATE)
+        }
+        if (ContextCompat.checkSelfPermission(this, android.Manifest.permission.READ_CONTACTS) != PackageManager.PERMISSION_GRANTED) {
+            permissionsToRequest.add(android.Manifest.permission.READ_CONTACTS)
+        }
+        if (ContextCompat.checkSelfPermission(this, android.Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            permissionsToRequest.add(android.Manifest.permission.RECORD_AUDIO)
+        }
+
+        if (permissionsToRequest.isNotEmpty()) {
+            Log.i("MainActivity", "Requesting missing permissions: $permissionsToRequest")
+            permissionLauncher.launch(permissionsToRequest.toTypedArray())
         }
     }
 
@@ -145,7 +209,7 @@ class MainActivity : ComponentActivity() {
 fun DroppMainScreen(modifier: Modifier = Modifier) {
     val context = LocalContext.current
 
-    // 1. Prepare the File Picker Launcher in Compose
+    // 1. File Picker Launcher
     val filePickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
     ) { uri: Uri? ->
@@ -154,33 +218,134 @@ fun DroppMainScreen(modifier: Modifier = Modifier) {
         }
     }
 
-    // 2. Draw the UI with multiple buttons
+    val isRoutingToPc by AudioRoutingManager.isRoutingToPc.collectAsState()
+    val targetIp by CommandTransferManager.targetWindowsIpFlow.collectAsState()
+
     Column(
-        modifier = modifier.fillMaxSize(),
+        modifier = modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(20.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
+        verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-        Button(onClick = {
-            // "*/*" opens the Android file browser and allows picking any file type
-            filePickerLauncher.launch("*/*")
-        }) {
-            Text("Test Send File to Windows")
+        // Status Pill
+        Card(
+            colors = CardDefaults.cardColors(
+                containerColor = if (!targetIp.isNullOrBlank())
+                    MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)
+                else
+                    MaterialTheme.colorScheme.surfaceVariant
+            ),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(modifier = Modifier.padding(14.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                Text(
+                    text = if (!targetIp.isNullOrBlank()) "PC Connected: $targetIp" else "Looking for Windows PC on Wi-Fi...",
+                    fontWeight = FontWeight.Medium,
+                    style = MaterialTheme.typography.bodyMedium,
+                    textAlign = TextAlign.Center
+                )
+            }
         }
 
-        Spacer(modifier = Modifier.height(16.dp))
+        // --- FEATURE CARD: ROUTE AUDIO TO WINDOWS (ZERO PERMISSIONS) ---
+        Card(
+            colors = CardDefaults.cardColors(
+                containerColor = if (isRoutingToPc)
+                    MaterialTheme.colorScheme.primaryContainer
+                else
+                    MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
+            ),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(
+                modifier = Modifier.padding(18.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Text(
+                    text = "Route Audio to Windows PC",
+                    fontWeight = FontWeight.Bold,
+                    style = MaterialTheme.typography.titleMedium
+                )
+                Text(
+                    text = "Stream all phone audio (YouTube, Spotify, music, videos, games) directly through your Windows PC speakers. Toggle on or off anytime with zero popups.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center
+                )
 
-        Button(onClick = {
-            // Check if permission is already granted
-            val isGranted = NotificationManagerCompat.getEnabledListenerPackages(context)
-                .contains(context.packageName)
+                if (isRoutingToPc) {
+                    Text(
+                        text = "● Playing on Windows PC Speakers",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary
+                    )
 
-            if (!isGranted) {
-                // Open the Android settings screen for Notification Access
-                val intent = Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)
-                context.startActivity(intent)
+                    Button(
+                        onClick = {
+                            AudioRoutingManager.disableAudioRouting(context)
+                            Toast.makeText(context, "Audio restored to phone speakers", Toast.LENGTH_SHORT).show()
+                        },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.error
+                        ),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("Stop Routing (Play on Phone)")
+                    }
+                } else {
+                    Text(
+                        text = "○ Playing on Phone Speakers",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+
+                    Button(
+                        onClick = {
+                            val btManager = context.getSystemService(Context.BLUETOOTH_SERVICE) as? android.bluetooth.BluetoothManager
+                            if (btManager?.adapter?.isEnabled != true) {
+                                Toast.makeText(context, "Please turn on Bluetooth first", Toast.LENGTH_SHORT).show()
+                            } else {
+                                AudioRoutingManager.enableAudioRouting(context)
+                                Toast.makeText(context, "Routing audio to PC speakers...", Toast.LENGTH_SHORT).show()
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("Route Audio to PC")
+                    }
+                }
             }
-        }) {
-            Text("Grant Notification Permission")
+        }
+
+        // --- QUICK ACTIONS ---
+        Button(
+            onClick = {
+                filePickerLauncher.launch("*/*")
+            },
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text("Send File to Windows")
+        }
+
+        Button(
+            onClick = {
+                val isGranted = NotificationManagerCompat.getEnabledListenerPackages(context)
+                    .contains(context.packageName)
+
+                if (!isGranted) {
+                    val intent = Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)
+                    context.startActivity(intent)
+                } else {
+                    Toast.makeText(context, "Notification permission is already granted!", Toast.LENGTH_SHORT).show()
+                }
+            },
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text("Notification Mirroring Permission")
         }
     }
 }
