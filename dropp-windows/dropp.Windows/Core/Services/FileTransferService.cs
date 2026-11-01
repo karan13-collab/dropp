@@ -22,7 +22,7 @@ namespace dropp.Windows.Services
             AppLogger.Log("FileTransfer", $"Target IP set to {_targetIp}");
         }
 
-        public async Task SendFileAsync(string filePath)
+        public async Task SendFileAsync(string filePath, bool isPreview = false)
         {
             if (string.IsNullOrEmpty(_targetIp))
             {
@@ -42,14 +42,14 @@ namespace dropp.Windows.Services
                 string fileName = fileInfo.Name;
                 long fileSize = fileInfo.Length;
 
-                AppLogger.Log("FileTransfer", $"Preparing to send: {fileName} ({fileSize} bytes) to {_targetIp}");
+                AppLogger.Log("FileTransfer", $"Preparing to send: {fileName} ({fileSize} bytes) to {_targetIp} (isPreview={isPreview})");
 
                 using var client = new TcpClient();
                 await client.ConnectAsync(_targetIp, FilePort);
                 using var netStream = client.GetStream();
 
                 // 1. Construct and send the metadata header
-                string header = $"FILENAME:{fileName}|SIZE:{fileSize}\n";
+                string header = $"FILENAME:{fileName}|SIZE:{fileSize}|PREVIEW:{(isPreview ? "TRUE" : "FALSE")}\n";
                 byte[] headerBytes = Encoding.UTF8.GetBytes(header);
                 await netStream.WriteAsync(headerBytes, 0, headerBytes.Length);
                 await netStream.FlushAsync();
@@ -125,31 +125,64 @@ namespace dropp.Windows.Services
                                 string[] parts = header.Split('|');
                                 string fileName = parts[0].Substring(parts[0].IndexOf(':') + 1).Trim();
                                 long fileSize = long.Parse(parts[1].Substring(parts[1].IndexOf(':') + 1).Trim());
+                                bool isPreview = false;
 
-                                AppLogger.Log("FileTransfer", $"Incoming file detected: {fileName} ({fileSize} bytes)");
-
-                                // 3. Create the "Downloads/dropp" directory safely
-                                string downloadsPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads", "dropp");
-                                Directory.CreateDirectory(downloadsPath);
-                                string savePath = Path.Combine(downloadsPath, fileName);
-
-                                // 4. Stream the file in 64KB chunks
-                                using var fileStream = new FileStream(savePath, FileMode.Create, FileAccess.Write, FileShare.None);
-                                byte[] buffer = new byte[64 * 1024];
-                                long totalRead = 0;
-
-                                while (totalRead < fileSize)
+                                foreach (var part in parts)
                                 {
-                                    int bytesToRead = (int)Math.Min(buffer.Length, fileSize - totalRead);
-                                    int read = await stream.ReadAsync(buffer, 0, bytesToRead);
-
-                                    if (read == 0) break;
-
-                                    await fileStream.WriteAsync(buffer, 0, read);
-                                    totalRead += read;
+                                    if (part.StartsWith("PREVIEW:", StringComparison.OrdinalIgnoreCase))
+                                    {
+                                        string val = part.Substring("PREVIEW:".Length).Trim();
+                                        isPreview = string.Equals(val, "TRUE", StringComparison.OrdinalIgnoreCase);
+                                    }
                                 }
 
-                                AppLogger.Log("FileTransfer", $"Successfully received 100% of {fileName}!");
+                                AppLogger.Log("FileTransfer", $"Incoming file detected: {fileName} ({fileSize} bytes, isPreview={isPreview})");
+
+                                // 3. Select save directory: Temp preview vs persistent Downloads
+                                string saveDir = isPreview
+                                    ? Path.Combine(Path.GetTempPath(), "dropp_preview")
+                                    : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads", "dropp");
+
+                                Directory.CreateDirectory(saveDir);
+                                string savePath = Path.Combine(saveDir, fileName);
+
+                                // 4. Stream the file in 64KB chunks
+                                using (var fileStream = new FileStream(savePath, FileMode.Create, FileAccess.Write, FileShare.None))
+                                {
+                                    byte[] buffer = new byte[64 * 1024];
+                                    long totalRead = 0;
+
+                                    while (totalRead < fileSize)
+                                    {
+                                        int bytesToRead = (int)Math.Min(buffer.Length, fileSize - totalRead);
+                                        int read = await stream.ReadAsync(buffer, 0, bytesToRead);
+
+                                        if (read == 0) break;
+
+                                        await fileStream.WriteAsync(buffer, 0, read);
+                                        totalRead += read;
+                                    }
+                                }
+
+                                AppLogger.Log("FileTransfer", $"Successfully received 100% of {fileName} to {savePath}!");
+
+                                // 5. If this is a preview file, auto-launch in default OS viewer
+                                if (isPreview)
+                                {
+                                    try
+                                    {
+                                        Process.Start(new ProcessStartInfo
+                                        {
+                                            FileName = savePath,
+                                            UseShellExecute = true
+                                        });
+                                        AppLogger.Log("FileTransfer", $"Auto-launched preview for {fileName}");
+                                    }
+                                    catch (Exception pEx)
+                                    {
+                                        AppLogger.Log("FileTransfer", $"Failed to auto-launch preview for {fileName}: {pEx.Message}");
+                                    }
+                                }
                             }
                         }
                         catch (Exception ex)
@@ -162,6 +195,26 @@ namespace dropp.Windows.Services
                 {
                     AppLogger.Log("FileTransfer", $"Listener error: {ex.Message}");
                 }
+            }
+        }
+
+        public static string? SavePreviewToDownloads(string previewPath)
+        {
+            try
+            {
+                if (!File.Exists(previewPath)) return null;
+                string fileName = Path.GetFileName(previewPath);
+                string downloadsPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads", "dropp");
+                Directory.CreateDirectory(downloadsPath);
+                string destPath = Path.Combine(downloadsPath, fileName);
+                File.Copy(previewPath, destPath, overwrite: true);
+                AppLogger.Log("FileTransfer", $"Saved preview to downloads: {destPath}");
+                return destPath;
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Log("FileTransfer", $"Error saving preview to downloads: {ex.Message}");
+                return null;
             }
         }
     }

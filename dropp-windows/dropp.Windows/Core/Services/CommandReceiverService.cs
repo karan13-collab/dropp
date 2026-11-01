@@ -36,11 +36,21 @@ namespace dropp.Windows.Services
                 {
                     try
                     {
+                        string fallbackDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "dropp");
+                        string fallbackIpFile = Path.Combine(fallbackDir, "last_android_ip.txt");
                         string ipFile = Path.Combine(global::Windows.Storage.ApplicationData.Current.LocalFolder.Path, "last_android_ip.txt");
-                        if (File.Exists(ipFile))
+
+                        if (File.Exists(fallbackIpFile))
+                        {
+                            _targetAndroidIp = File.ReadAllText(fallbackIpFile).Trim();
+                            AppLogger.Log("CommandReceiver", $"Loaded TargetAndroidIp from fallback disk: {_targetAndroidIp}");
+                            try { File.WriteAllText(ipFile, _targetAndroidIp); } catch { }
+                        }
+                        else if (File.Exists(ipFile))
                         {
                             _targetAndroidIp = File.ReadAllText(ipFile).Trim();
-                            AppLogger.Log("CommandReceiver", $"Loaded TargetAndroidIp from disk: {_targetAndroidIp}");
+                            AppLogger.Log("CommandReceiver", $"Loaded TargetAndroidIp from local folder: {_targetAndroidIp}");
+                            try { Directory.CreateDirectory(fallbackDir); File.WriteAllText(fallbackIpFile, _targetAndroidIp); } catch { }
                         }
                     }
                     catch { }
@@ -64,11 +74,13 @@ namespace dropp.Windows.Services
             }
             try
             {
+                string fallbackDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "dropp");
+                Directory.CreateDirectory(fallbackDir);
+                string fallbackIpFile = Path.Combine(fallbackDir, "last_android_ip.txt");
+                File.WriteAllText(fallbackIpFile, _targetAndroidIp);
+
                 string ipFile = Path.Combine(global::Windows.Storage.ApplicationData.Current.LocalFolder.Path, "last_android_ip.txt");
-                if (!File.Exists(ipFile) || changed)
-                {
-                    File.WriteAllText(ipFile, _targetAndroidIp);
-                }
+                File.WriteAllText(ipFile, _targetAndroidIp);
             }
             catch { }
         }
@@ -404,6 +416,60 @@ namespace dropp.Windows.Services
                         await SendAudioRoutingStatusAsync(BluetoothAudioSinkService.Instance.IsRoutingEnabled && BluetoothAudioSinkService.Instance.IsSinkActive);
                     }
                 }
+                else if (type == "SEARCH_REQ")
+                {
+                    _ = SearchService.Instance.HandleIncomingSearchRequestAsync(json);
+                }
+                else if (type == "SEARCH_RES")
+                {
+                    SearchService.Instance.HandleIncomingSearchResponse(json);
+                }
+                else if (type == "BROWSE_REQ")
+                {
+                    _ = FileBrowserService.Instance.HandleIncomingBrowseRequestAsync(json);
+                }
+                else if (type == "BROWSE_RES")
+                {
+                    FileBrowserService.Instance.HandleIncomingBrowseResponse(json);
+                }
+                else if (type == "GALLERY_RES")
+                {
+                    _ = GalleryService.Instance.HandleIncomingGalleryResponseAsync(json);
+                }
+                else if (type == "GALLERY_ALBUMS_RES")
+                {
+                    _ = GalleryService.Instance.HandleIncomingAlbumsResponseAsync(json);
+                }
+                else if (type == "STREAM_REQ")
+                {
+                    string fileId = (json["id"] ?? json["Id"])?.ToString() ?? "";
+                    bool isPreview = json["isPreview"]?.GetValue<bool>() ?? json["IsPreview"]?.GetValue<bool>() ?? false;
+                    AppLogger.Log("CommandReceiver", $"Received STREAM_REQ: id='{fileId}', isPreview={isPreview}");
+                    if (!string.IsNullOrEmpty(fileId) && File.Exists(fileId))
+                    {
+                        _ = Task.Run(async () =>
+                        {
+                            if (App.FileTransfer != null)
+                            {
+                                await App.FileTransfer.SendFileAsync(fileId, isPreview);
+                            }
+                        });
+                    }
+                    else
+                    {
+                        AppLogger.Log("CommandReceiver", $"STREAM_REQ target file does not exist: {fileId}");
+                    }
+                }
+                else if (type == "DISCOVERY_PING")
+                {
+                    AppLogger.Log("CommandReceiver", "Received DISCOVERY_PING from Android, sending DISCOVERY_PONG...");
+                    var pong = new JsonObject { ["type"] = "DISCOVERY_PONG", ["Type"] = "DISCOVERY_PONG" };
+                    _ = SendCommandAsync(pong.ToJsonString());
+                }
+                else if (type == "DISCOVERY_PONG")
+                {
+                    AppLogger.Log("CommandReceiver", "Received DISCOVERY_PONG from Android. Peer verified active.");
+                }
             }
             catch (Exception ex)
             {
@@ -440,6 +506,17 @@ namespace dropp.Windows.Services
             string targetIp = TargetAndroidIp
                               ?? App.FileTransfer?._targetIp
                               ?? "";
+
+            if (string.IsNullOrEmpty(targetIp))
+            {
+                string? gatewayIp = dropp.Windows.Core.Networking.MdnsManager.GetPhysicalWifiGatewayIp();
+                if (!string.IsNullOrEmpty(gatewayIp))
+                {
+                    targetIp = gatewayIp;
+                    SetTargetAndroidIp(targetIp);
+                    AppLogger.Log("CommandReceiver", $"Auto-resolved target Android IP from Wi-Fi gateway: {targetIp}");
+                }
+            }
 
             if (string.IsNullOrEmpty(targetIp))
             {

@@ -4,6 +4,7 @@
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:local="using:dropp.Windows"
+    xmlns:services="using:dropp.Windows.Services"
     xmlns:tb="using:H.NotifyIcon"
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
@@ -35,6 +36,276 @@
                         <TextBlock Text="Ecosystem" FontSize="11" FontWeight="SemiBold" Foreground="White"/>
                     </Border>
                 </StackPanel>
+
+                <!-- Remote Android Library & File Explorer Card -->
+                <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                        BorderThickness="1"
+                        CornerRadius="14"
+                        Padding="24"
+                        Margin="0,8,0,0">
+                    <StackPanel Spacing="16">
+                        <!-- Card Header -->
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+
+                            <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
+                                <FontIcon Glyph="&#xED25;" FontSize="20" Foreground="{ThemeResource AccentAAFillColorDefaultBrush}"/>
+                                <TextBlock Text="Android File Library &amp; Remote Explorer" FontSize="18" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                            </StackPanel>
+
+                            <Border Background="{ThemeResource SubtleFillColorSecondaryBrush}" CornerRadius="6" Padding="8,4" Grid.Column="1" VerticalAlignment="Center">
+                                <TextBlock Text="Win + Shift + D" FontSize="11" FontWeight="SemiBold" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                            </Border>
+                        </Grid>
+
+                        <!-- Breadcrumb & Path Navigation Bar -->
+                        <Grid ColumnSpacing="8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+
+                            <Button x:Name="NavRootButton" Click="NavRootButton_Click" ToolTipService.ToolTip="Go to Android Libraries Root">
+                                <StackPanel Orientation="Horizontal" Spacing="6">
+                                    <FontIcon Glyph="&#xE80F;" FontSize="14"/>
+                                    <TextBlock Text="Libraries"/>
+                                </StackPanel>
+                            </Button>
+
+                            <Button x:Name="NavUpButton" Grid.Column="1" Click="NavUpButton_Click" ToolTipService.ToolTip="Navigate up one directory" IsEnabled="False">
+                                <StackPanel Orientation="Horizontal" Spacing="6">
+                                    <FontIcon Glyph="&#xE74A;" FontSize="14"/>
+                                    <TextBlock Text="Up"/>
+                                </StackPanel>
+                            </Button>
+
+                            <Border Grid.Column="2" Background="{ThemeResource SubtleFillColorSecondaryBrush}" CornerRadius="6" Padding="12,6" VerticalAlignment="Center">
+                                <TextBlock x:Name="CurrentPathText" Text="Android Libraries" FontSize="12" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" Foreground="{ThemeResource TextFillColorPrimaryBrush}"/>
+                            </Border>
+
+                            <Button x:Name="NavRefreshButton" Grid.Column="3" Click="NavRefreshButton_Click" ToolTipService.ToolTip="Refresh directory">
+                                <FontIcon Glyph="&#xE72C;" FontSize="14"/>
+                            </Button>
+                        </Grid>
+
+                        <!-- Quick Jump Android Library Shortcuts -->
+                        <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled" HorizontalScrollMode="Enabled">
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                <Button Content="📥 Downloads" Tag="Downloads" Click="QuickLibrary_Click" CornerRadius="6" FontSize="12"/>
+                                <Button Content="📷 Camera / DCIM" Tag="Camera" Click="QuickLibrary_Click" CornerRadius="6" FontSize="12"/>
+                                <Button Content="🖼 Pictures" Tag="Pictures" Click="QuickLibrary_Click" CornerRadius="6" FontSize="12"/>
+                                <Button Content="📄 Documents" Tag="Documents" Click="QuickLibrary_Click" CornerRadius="6" FontSize="12"/>
+                                <Button Content="🎵 Music" Tag="Music" Click="QuickLibrary_Click" CornerRadius="6" FontSize="12"/>
+                                <Button Content="🎬 Videos" Tag="Movies" Click="QuickLibrary_Click" CornerRadius="6" FontSize="12"/>
+                                <Button Content="💾 Internal Storage" Tag="Internal" Click="QuickLibrary_Click" CornerRadius="6" FontSize="12"/>
+                            </StackPanel>
+                        </ScrollViewer>
+
+                        <!-- Search Input & Global Search Action -->
+                        <Grid ColumnSpacing="8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+
+                            <TextBox x:Name="SearchBox"
+                                     PlaceholderText="Filter current folder or search Android files..."
+                                     TextChanged="SearchBox_TextChanged"
+                                     KeyDown="SearchBox_KeyDown"
+                                     FontSize="14"
+                                     Padding="12,10"
+                                     CornerRadius="8"/>
+
+                            <Button x:Name="GlobalSearchButton" Grid.Column="1" Click="GlobalSearchButton_Click" Style="{StaticResource AccentButtonStyle}" Padding="14,10" CornerRadius="8">
+                                <StackPanel Orientation="Horizontal" Spacing="6">
+                                    <FontIcon Glyph="&#xE721;" FontSize="14"/>
+                                    <TextBlock Text="Search All"/>
+                                </StackPanel>
+                            </Button>
+                        </Grid>
+
+                        <!-- Category Filter Chips -->
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <RadioButton x:Name="FilterAll" Content="All" Checked="Filter_Checked" GroupName="SearchFilterGroup"/>
+                            <RadioButton x:Name="FilterFolder" Content="Folders" Checked="Filter_Checked" GroupName="SearchFilterGroup"/>
+                            <RadioButton x:Name="FilterPdf" Content="PDFs" Checked="Filter_Checked" GroupName="SearchFilterGroup"/>
+                            <RadioButton x:Name="FilterDoc" Content="Documents" Checked="Filter_Checked" GroupName="SearchFilterGroup"/>
+                            <RadioButton x:Name="FilterImage" Content="Images" Checked="Filter_Checked" GroupName="SearchFilterGroup"/>
+                            <RadioButton x:Name="FilterVideo" Content="Videos" Checked="Filter_Checked" GroupName="SearchFilterGroup"/>
+                            <RadioButton x:Name="FilterAudio" Content="Audio" Checked="Filter_Checked" GroupName="SearchFilterGroup"/>
+                        </StackPanel>
+
+                        <!-- Progress Bar / Status -->
+                        <ProgressBar x:Name="SearchProgressBar" IsIndeterminate="True" Visibility="Collapsed"/>
+                        <TextBlock x:Name="SearchStatusText" Text="Browse folders or search files on Android phone" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+
+                        <!-- Items ListView -->
+                        <ListView x:Name="SearchResultsList"
+                                  MaxHeight="320"
+                                  SelectionMode="None"
+                                  ItemClick="SearchResultsList_ItemClick"
+                                  IsItemClickEnabled="True">
+                            <ListView.ItemTemplate>
+                                <DataTemplate x:DataType="services:RemoteBrowserItem">
+                                    <Grid Margin="0,4" Padding="8" Background="{ThemeResource SubtleFillColorTransparentBrush}" CornerRadius="8">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+
+                                        <!-- Type Glyph Icon -->
+                                        <Border Grid.Column="0" Width="36" Height="36" CornerRadius="6" Background="{ThemeResource SubtleFillColorSecondaryBrush}" Margin="0,0,12,0">
+                                            <FontIcon Glyph="{x:Bind TypeGlyph}" FontSize="16" Foreground="{ThemeResource AccentAAFillColorDefaultBrush}" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                        </Border>
+
+                                        <!-- Name & Subtitle -->
+                                        <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="2">
+                                            <TextBlock Text="{x:Bind Name}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
+                                            <TextBlock Text="{x:Bind SubtitleText}" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                                        </StackPanel>
+
+                                        <!-- Trailing Actions -->
+                                        <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+                                            <!-- Folder open button -->
+                                            <Button Content="Open" Tag="{x:Bind Id}" Click="FolderItem_Click" Visibility="{x:Bind FolderButtonVisibility}" Padding="12,4" FontSize="12"/>
+                                            <!-- File preview and download buttons -->
+                                            <Button Content="Preview" Tag="{x:Bind Id}" Click="PreviewItem_Click" Visibility="{x:Bind FileActionsVisibility}" Padding="10,4" FontSize="12"/>
+                                            <Button Content="Save to PC" Tag="{x:Bind Id}" Click="SaveItem_Click" Style="{StaticResource AccentButtonStyle}" Visibility="{x:Bind FileActionsVisibility}" Padding="10,4" FontSize="12"/>
+                                        </StackPanel>
+
+                                        <!-- Context Flyout for Right-Click -->
+                                        <Grid.ContextFlyout>
+                                            <MenuFlyout>
+                                                <MenuFlyoutItem Text="Open Folder" Tag="{x:Bind Id}" Click="FolderItem_Click" Visibility="{x:Bind FolderButtonVisibility}"/>
+                                                <MenuFlyoutItem Text="Preview Remotely" Tag="{x:Bind Id}" Click="PreviewItem_Click" Visibility="{x:Bind FileActionsVisibility}"/>
+                                                <MenuFlyoutItem Text="Save to PC (Downloads)" Tag="{x:Bind Id}" Click="SaveItem_Click" Visibility="{x:Bind FileActionsVisibility}"/>
+                                            </MenuFlyout>
+                                        </Grid.ContextFlyout>
+                                    </Grid>
+                                </DataTemplate>
+                            </ListView.ItemTemplate>
+                        </ListView>
+                    </StackPanel>
+                </Border>
+
+                <!-- Android Photo & Video Gallery Card -->
+                <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                        BorderThickness="1"
+                        CornerRadius="14"
+                        Padding="24"
+                        Margin="0,8,0,0">
+                    <StackPanel Spacing="16">
+                        <!-- Card Header -->
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+
+                            <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
+                                <FontIcon Glyph="&#xEB9F;" FontSize="20" Foreground="{ThemeResource AccentAAFillColorDefaultBrush}"/>
+                                <TextBlock Text="Android Photo &amp; Video Gallery" FontSize="18" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                            </StackPanel>
+
+                            <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                                <Border Background="{ThemeResource SubtleFillColorSecondaryBrush}" CornerRadius="12" Padding="10,4">
+                                    <TextBlock x:Name="GalleryCountBadge" Text="0 items" FontSize="12" FontWeight="SemiBold"/>
+                                </Border>
+                                <Button x:Name="GalleryRefreshButton" Click="GalleryRefreshButton_Click" ToolTipService.ToolTip="Refresh gallery">
+                                    <FontIcon Glyph="&#xE72C;" FontSize="14"/>
+                                </Button>
+                            </StackPanel>
+                        </Grid>
+
+                        <!-- Dynamic Album Categories from Android -->
+                        <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled" HorizontalScrollMode="Enabled">
+                            <StackPanel x:Name="GalleryAlbumsPanel" Orientation="Horizontal" Spacing="8">
+                                <Button Content="🖼 All Media" Tag="ALL" CornerRadius="6" FontSize="12" Style="{StaticResource AccentButtonStyle}"/>
+                            </StackPanel>
+                        </ScrollViewer>
+
+                        <!-- Progress Bar / Status -->
+                        <ProgressBar x:Name="GalleryProgressBar" IsIndeterminate="True" Visibility="Collapsed"/>
+                        <TextBlock x:Name="GalleryStatusText" Text="Browse high-resolution photos and videos from your Android phone" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+
+                        <!-- Gallery GridView -->
+                        <GridView x:Name="GalleryGridView"
+                                  MaxHeight="360"
+                                  SelectionMode="None"
+                                  ItemClick="GalleryGridView_ItemClick"
+                                  IsItemClickEnabled="True">
+                            <GridView.ItemTemplate>
+                                <DataTemplate x:DataType="services:GalleryItem">
+                                    <Grid Width="160" Height="175" Margin="4" CornerRadius="10" Background="{ThemeResource SubtleFillColorSecondaryBrush}">
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="125"/>
+                                            <RowDefinition Height="50"/>
+                                        </Grid.RowDefinitions>
+
+                                        <!-- Thumbnail Image or Placeholder -->
+                                        <Grid Grid.Row="0" CornerRadius="10,10,0,0">
+                                            <FontIcon Glyph="&#xEB9F;" FontSize="28" Foreground="{ThemeResource TextFillColorTertiaryBrush}" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                            <Image Source="{x:Bind ThumbnailImage, Mode=OneWay}"
+                                                   Stretch="UniformToFill"
+                                                   HorizontalAlignment="Center"
+                                                   VerticalAlignment="Center"/>
+                                        </Grid>
+
+                                        <!-- Video Glyph Overlay -->
+                                        <Border Grid.Row="0"
+                                                Visibility="{x:Bind VideoBadgeVisibility}"
+                                                HorizontalAlignment="Right"
+                                                VerticalAlignment="Top"
+                                                Margin="6"
+                                                Padding="6,2"
+                                                Background="#80000000"
+                                                CornerRadius="6">
+                                            <FontIcon Glyph="&#xE8B7;" FontSize="12" Foreground="White"/>
+                                        </Border>
+
+                                        <!-- Caption Bar -->
+                                        <Grid Grid.Row="1" Padding="8,4" Background="{ThemeResource SubtleFillColorTransparentBrush}">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="Auto"/>
+                                            </Grid.ColumnDefinitions>
+
+                                            <StackPanel VerticalAlignment="Center" Spacing="1">
+                                                <TextBlock Text="{x:Bind Name}" FontSize="11" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
+                                                <TextBlock Text="{x:Bind FormattedDate}" FontSize="10" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                                            </StackPanel>
+
+                                            <Button Grid.Column="1"
+                                                    Tag="{x:Bind Id}"
+                                                    Click="SaveGalleryItem_Click"
+                                                    ToolTipService.ToolTip="Save photo to PC"
+                                                    Padding="6,4"
+                                                    VerticalAlignment="Center">
+                                                <FontIcon Glyph="&#xE896;" FontSize="12"/>
+                                            </Button>
+                                        </Grid>
+
+                                        <!-- Right Click Context Menu -->
+                                        <Grid.ContextFlyout>
+                                            <MenuFlyout>
+                                                <MenuFlyoutItem Text="Preview in Photos" Tag="{x:Bind Id}" Click="PreviewGalleryItem_Click"/>
+                                                <MenuFlyoutItem Text="Save to PC (Downloads)" Tag="{x:Bind Id}" Click="SaveGalleryItem_Click"/>
+                                            </MenuFlyout>
+                                        </Grid.ContextFlyout>
+                                    </Grid>
+                                </DataTemplate>
+                            </GridView.ItemTemplate>
+                        </GridView>
+                    </StackPanel>
+                </Border>
 
                 <!-- Call Passthrough Card -->
                 <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"

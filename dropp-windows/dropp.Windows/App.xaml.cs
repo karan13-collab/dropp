@@ -150,6 +150,15 @@ namespace dropp.Windows
                 {
                     AppLogger.Log("App", $"Main instance Activated: Kind={incomingArgs?.Kind}, Data={incomingArgs?.Data?.GetType().FullName}");
 
+                    // If user clicked the app icon again, restore and activate the window!
+                    if (incomingArgs?.Kind == ExtendedActivationKind.Launch)
+                    {
+                        if (m_window is MainWindow mw)
+                        {
+                            mw.BringToForeground();
+                        }
+                    }
+
                     // 1. Handle Toast Notification Actions when redirected
                     if (incomingArgs != null)
                     {
@@ -205,6 +214,10 @@ namespace dropp.Windows
                 CallAudioBridgeService.Instance.StartListener();
 
                 m_window.Activate();
+                if (m_window is MainWindow mainWindow)
+                {
+                    mainWindow.BringToForeground();
+                }
 
                 _ = Task.Run(async () =>
                 {

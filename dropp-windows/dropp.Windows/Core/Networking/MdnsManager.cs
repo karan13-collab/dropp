@@ -139,6 +139,30 @@ namespace dropp.Windows.Core.Networking
             }
         }
 
+        /// <summary>
+        /// Returns the default IPv4 Gateway address for the active physical Wi-Fi adapter.
+        /// When connected to an Android Portable Hotspot, this Gateway IP is precisely the phone's address.
+        /// </summary>
+        public static string? GetPhysicalWifiGatewayIp()
+        {
+            foreach (var nic in NetworkInterface.GetAllNetworkInterfaces())
+            {
+                if (nic.NetworkInterfaceType != NetworkInterfaceType.Wireless80211
+                    || nic.OperationalStatus != OperationalStatus.Up)
+                    continue;
+
+                foreach (var gateway in nic.GetIPProperties().GatewayAddresses)
+                {
+                    if (gateway.Address.AddressFamily == AddressFamily.InterNetwork
+                        && !IPAddress.IsLoopback(gateway.Address))
+                    {
+                        return gateway.Address.ToString();
+                    }
+                }
+            }
+            return null;
+        }
+
         public async Task StartListeningAsync()
         {
             try
@@ -149,23 +173,58 @@ namespace dropp.Windows.Core.Networking
                     // Check if our own IP changed
                     UpdateWifiIpAndReAdvertise();
 
-                    var results = await ZeroconfResolver.ResolveAsync("_dropp._tcp.local.");
-
-                    foreach (var host in results)
+                    // 1. Direct Gateway probe (handles Android Mobile Hotspot tethering)
+                    string? gatewayIp = GetPhysicalWifiGatewayIp();
+                    if (!string.IsNullOrEmpty(gatewayIp))
                     {
-                        var service = host.Services.Values.FirstOrDefault();
-                        var port = service?.Port ?? 8765;
-
-                        // Exclude our own PC, react to anything else
-                        if (!host.DisplayName.Contains("dropp_windows"))
+                        _ = Task.Run(async () =>
                         {
-                            string peerIp = host.IPAddress.ToString();
-                            AppLogger.Log("mDNS", $"Found External Peer: {host.DisplayName} at {peerIp}:{port}");
-                            CommandReceiverService.SetTargetAndroidIp(peerIp);
-                            App.ClipboardService?.SetTargetIp(peerIp);
-                            App.FileTransfer?.SetTargetIp(peerIp);
+                            try
+                            {
+                                using var client = new TcpClient();
+                                var connectTask = client.ConnectAsync(gatewayIp, 8767);
+                                if (await Task.WhenAny(connectTask, Task.Delay(1500)) == connectTask)
+                                {
+                                    await connectTask;
+                                    CommandReceiverService.SetTargetAndroidIp(gatewayIp);
+                                    App.ClipboardService?.SetTargetIp(gatewayIp);
+                                    App.FileTransfer?.SetTargetIp(gatewayIp);
+                                    AppLogger.Log("mDNS", $"Discovered Android phone at Gateway IP: {gatewayIp}");
+
+                                    var ping = new System.Text.Json.Nodes.JsonObject
+                                    {
+                                        ["type"] = "DISCOVERY_PING",
+                                        ["Type"] = "DISCOVERY_PING"
+                                    };
+                                    await CommandReceiverService.SendCommandAsync(ping.ToJsonString());
+                                }
+                            }
+                            catch { }
+                        });
+                    }
+
+                    // 2. mDNS Zeroconf Resolver (handles standard Wi-Fi router networks)
+                    try
+                    {
+                        var results = await ZeroconfResolver.ResolveAsync("_dropp._tcp.local.", scanTime: TimeSpan.FromSeconds(2));
+
+                        foreach (var host in results)
+                        {
+                            var service = host.Services.Values.FirstOrDefault();
+                            var port = service?.Port ?? 8765;
+
+                            // Exclude our own PC, react to anything else
+                            if (!host.DisplayName.Contains("dropp_windows"))
+                            {
+                                string peerIp = host.IPAddress.ToString();
+                                AppLogger.Log("mDNS", $"Found External Peer via mDNS: {host.DisplayName} at {peerIp}:{port}");
+                                CommandReceiverService.SetTargetAndroidIp(peerIp);
+                                App.ClipboardService?.SetTargetIp(peerIp);
+                                App.FileTransfer?.SetTargetIp(peerIp);
+                            }
                         }
                     }
+                    catch { }
 
                     await Task.Delay(5000); // Wait 5 seconds before scanning again
                 }

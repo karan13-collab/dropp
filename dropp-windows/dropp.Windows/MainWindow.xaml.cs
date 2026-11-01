@@ -5,8 +5,12 @@ using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Imaging;
 using QRCoder;
 using System;
+using System.Collections.Generic;
+using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
+using System.Runtime.InteropServices;
 using System.Threading.Tasks;
 using System.Windows.Input;
 using Windows.Storage.Pickers;
@@ -20,6 +24,18 @@ namespace dropp.Windows
         private AppWindow? _appWindow;
         private readonly DispatcherTimer _callTimer;
         private DateTime _callStartTime;
+
+        private IntPtr _hWnd;
+        private readonly ObservableCollection<RemoteBrowserItem> _displayedItems = new();
+        private List<RemoteBrowserItem> _cachedDirectoryItems = new();
+        private string _currentRemotePath = "ROOT";
+        private string? _parentRemotePath = null;
+        private bool _isGlobalSearchActive = false;
+        private readonly DispatcherTimer _searchDebounceTimer;
+        private string _selectedFilter = "ALL";
+
+        private readonly ObservableCollection<GalleryItem> _galleryItems = new();
+        private string _selectedGalleryBucket = "CAMERA";
 
         public ICommand TrayDoubleClickCommand { get; }
         public ICommand OpenAppCommand { get; }
@@ -48,12 +64,41 @@ namespace dropp.Windows
             ShowPairingQrCode();
 
             IntPtr hWnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
+            _hWnd = hWnd;
             Microsoft.UI.WindowId windowId = Microsoft.UI.Win32Interop.GetWindowIdFromWindow(hWnd);
             _appWindow = AppWindow.GetFromWindowId(windowId);
             if (_appWindow != null)
             {
                 _appWindow.Closing += AppWindow_Closing;
+                _appWindow.Show();
             }
+            ShowWindow(_hWnd, SW_RESTORE);
+            SetForegroundWindow(_hWnd);
+
+            // Setup Cross-Device File Explorer & Remote Search
+            SearchResultsList.ItemsSource = _displayedItems;
+            _searchDebounceTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(400) };
+            _searchDebounceTimer.Tick += SearchDebounceTimer_Tick;
+            SearchService.Instance.RemoteResultsReceived += OnRemoteResultsReceived;
+            FileBrowserService.Instance.RemoteDirectoryChanged += OnRemoteDirectoryChanged;
+
+            if (FilterAll != null)
+            {
+                FilterAll.IsChecked = true;
+            }
+
+            // Setup Cross-Device Gallery Preview
+            GalleryGridView.ItemsSource = _galleryItems;
+            GalleryService.Instance.GalleryReceived += OnGalleryReceived;
+            GalleryService.Instance.AlbumsReceived += OnGalleryAlbumsReceived;
+            _ = GalleryService.Instance.RequestAlbumsAsync();
+            _ = GalleryService.Instance.RequestGalleryAsync("ALL", 60);
+
+            // Load initial Android library root
+            _ = FileBrowserService.Instance.BrowseRemoteAsync("ROOT");
+
+            // Register Global Hotkeys (Win+Shift+D and Alt+Space)
+            RegisterGlobalHotkeys();
 
             // Setup Call Timer
             _callTimer = new DispatcherTimer
@@ -340,6 +385,499 @@ namespace dropp.Windows
                 Debug.WriteLine("[UI] User canceled file selection.");
             }
         }
+
+        #region Global Hotkeys (Win+Shift+D and Alt+Space) & Subclassing
+        private delegate IntPtr SubclassProc(IntPtr hWnd, uint uMsg, IntPtr wParam, IntPtr lParam, UIntPtr uIdSubclass, UIntPtr dwRefData);
+
+        [DllImport("comctl32.dll", SetLastError = true)]
+        private static extern bool SetWindowSubclass(IntPtr hWnd, SubclassProc pfnSubclass, UIntPtr uIdSubclass, UIntPtr dwRefData);
+
+        [DllImport("comctl32.dll", SetLastError = true)]
+        private static extern bool RemoveWindowSubclass(IntPtr hWnd, SubclassProc pfnSubclass, UIntPtr uIdSubclass);
+
+        [DllImport("comctl32.dll", SetLastError = true)]
+        private static extern IntPtr DefSubclassProc(IntPtr hWnd, uint uMsg, IntPtr wParam, IntPtr lParam);
+
+        [DllImport("user32.dll", SetLastError = true)]
+        private static extern bool RegisterHotKey(IntPtr hWnd, int id, uint fsModifiers, uint vk);
+
+        [DllImport("user32.dll", SetLastError = true)]
+        private static extern bool UnregisterHotKey(IntPtr hWnd, int id);
+
+        [DllImport("user32.dll")]
+        private static extern bool SetForegroundWindow(IntPtr hWnd);
+
+        [DllImport("user32.dll")]
+        private static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+
+        private const int HOTKEY_ID_WIN_SHIFT_D = 9001;
+        private const int HOTKEY_ID_ALT_SPACE = 9002;
+        private const uint MOD_ALT = 0x0001;
+        private const uint MOD_SHIFT = 0x0004;
+        private const uint MOD_WIN = 0x0008;
+        private const uint MOD_NOREPEAT = 0x4000;
+        private const uint VK_SPACE = 0x20;
+        private const uint VK_D = 0x44;
+        private const uint WM_HOTKEY = 0x0312;
+        private const int SW_RESTORE = 9;
+
+        private SubclassProc? _subclassProc;
+
+        private void RegisterGlobalHotkeys()
+        {
+            try
+            {
+                _subclassProc = new SubclassProc(WndProcSubclass);
+                SetWindowSubclass(_hWnd, _subclassProc, new UIntPtr(1), UIntPtr.Zero);
+
+                // Win + Shift + D
+                bool winD = RegisterHotKey(_hWnd, HOTKEY_ID_WIN_SHIFT_D, MOD_WIN | MOD_SHIFT | MOD_NOREPEAT, VK_D);
+                // Alt + Space
+                bool altSpace = RegisterHotKey(_hWnd, HOTKEY_ID_ALT_SPACE, MOD_ALT | MOD_NOREPEAT, VK_SPACE);
+
+                AppLogger.Log("MainWindow", $"Registered Global Hotkeys: Win+Shift+D={winD}, Alt+Space={altSpace}");
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Log("MainWindow", $"Error registering global hotkeys: {ex.Message}");
+            }
+        }
+
+        private IntPtr WndProcSubclass(IntPtr hWnd, uint uMsg, IntPtr wParam, IntPtr lParam, UIntPtr uIdSubclass, UIntPtr dwRefData)
+        {
+            if (uMsg == WM_HOTKEY)
+            {
+                int id = wParam.ToInt32();
+                if (id == HOTKEY_ID_WIN_SHIFT_D || id == HOTKEY_ID_ALT_SPACE)
+                {
+                    DispatcherQueue.TryEnqueue(ActivateAndFocusSearch);
+                    return IntPtr.Zero;
+                }
+            }
+            return DefSubclassProc(hWnd, uMsg, wParam, lParam);
+        }
+
+        public void BringToForeground()
+        {
+            DispatcherQueue.TryEnqueue(() =>
+            {
+                _appWindow?.Show();
+                ShowWindow(_hWnd, SW_RESTORE);
+                SetForegroundWindow(_hWnd);
+                this.Activate();
+            });
+        }
+
+        private void ActivateAndFocusSearch()
+        {
+            _appWindow?.Show();
+            ShowWindow(_hWnd, SW_RESTORE);
+            SetForegroundWindow(_hWnd);
+            this.Activate();
+            SearchBox.Focus(FocusState.Programmatic);
+            SearchBox.SelectAll();
+        }
+        #endregion
+
+        #region Remote File Explorer & Search UI Logic
+        private void NavigateToDirectory(string path)
+        {
+            SearchProgressBar.Visibility = Visibility.Visible;
+            SearchStatusText.Text = $"Browsing {((path == "ROOT") ? "Android Libraries" : path)}...";
+            _ = FileBrowserService.Instance.BrowseRemoteAsync(path);
+        }
+
+        private void NavRootButton_Click(object sender, RoutedEventArgs e)
+        {
+            NavigateToDirectory("ROOT");
+        }
+
+        private void NavUpButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (!string.IsNullOrEmpty(_parentRemotePath))
+            {
+                NavigateToDirectory(_parentRemotePath);
+            }
+            else if (_currentRemotePath != "ROOT")
+            {
+                NavigateToDirectory("ROOT");
+            }
+        }
+
+        private void NavRefreshButton_Click(object sender, RoutedEventArgs e)
+        {
+            NavigateToDirectory(_currentRemotePath);
+        }
+
+        private void QuickLibrary_Click(object sender, RoutedEventArgs e)
+        {
+            if (sender is FrameworkElement fe && fe.Tag is string tag)
+            {
+                NavigateToDirectory(tag);
+            }
+        }
+
+        private void FolderItem_Click(object sender, RoutedEventArgs e)
+        {
+            if (sender is FrameworkElement fe && fe.Tag is string folderId)
+            {
+                NavigateToDirectory(folderId);
+            }
+        }
+
+        private void SearchBox_TextChanged(object sender, TextChangedEventArgs e)
+        {
+            if (_isGlobalSearchActive)
+            {
+                _searchDebounceTimer.Stop();
+                string query = SearchBox.Text.Trim();
+                if (string.IsNullOrEmpty(query))
+                {
+                    _isGlobalSearchActive = false;
+                    ApplyCurrentDirectoryFilter();
+                    return;
+                }
+
+                SearchProgressBar.Visibility = Visibility.Visible;
+                SearchStatusText.Text = $"Searching Android for '{query}' [{_selectedFilter}]...";
+                _searchDebounceTimer.Start();
+            }
+            else
+            {
+                // Instant in-folder filtering
+                ApplyCurrentDirectoryFilter();
+            }
+        }
+
+        private void SearchBox_KeyDown(object sender, Microsoft.UI.Xaml.Input.KeyRoutedEventArgs e)
+        {
+            if (e.Key == global::Windows.System.VirtualKey.Enter)
+            {
+                ExecuteGlobalSearch();
+            }
+        }
+
+        private void GlobalSearchButton_Click(object sender, RoutedEventArgs e)
+        {
+            ExecuteGlobalSearch();
+        }
+
+        private void ExecuteGlobalSearch()
+        {
+            string query = SearchBox.Text.Trim();
+            if (string.IsNullOrEmpty(query))
+            {
+                _isGlobalSearchActive = false;
+                ApplyCurrentDirectoryFilter();
+                return;
+            }
+
+            _isGlobalSearchActive = true;
+            SearchProgressBar.Visibility = Visibility.Visible;
+            SearchStatusText.Text = $"Searching entire Android phone for '{query}' [{_selectedFilter}]...";
+            _ = SearchService.Instance.SearchRemoteAsync(query, _selectedFilter);
+        }
+
+        private void SearchDebounceTimer_Tick(object? sender, object e)
+        {
+            _searchDebounceTimer.Stop();
+            string query = SearchBox.Text.Trim();
+            if (!string.IsNullOrEmpty(query))
+            {
+                _ = SearchService.Instance.SearchRemoteAsync(query, _selectedFilter);
+            }
+        }
+
+        private void Filter_Checked(object sender, RoutedEventArgs e)
+        {
+            if (SearchBox == null || SearchStatusText == null || SearchProgressBar == null) return;
+
+            if (sender is RadioButton rb && rb.IsChecked == true)
+            {
+                _selectedFilter = rb.Name switch
+                {
+                    "FilterFolder" => "FOLDER",
+                    "FilterPdf" => "PDF",
+                    "FilterDoc" => "DOC",
+                    "FilterImage" => "IMAGE",
+                    "FilterVideo" => "VIDEO",
+                    "FilterAudio" => "AUDIO",
+                    _ => "ALL"
+                };
+
+                if (_isGlobalSearchActive)
+                {
+                    string query = SearchBox?.Text?.Trim() ?? "";
+                    if (!string.IsNullOrEmpty(query))
+                    {
+                        SearchProgressBar.Visibility = Visibility.Visible;
+                        SearchStatusText.Text = $"Searching Android for '{query}' [{_selectedFilter}]...";
+                        _ = SearchService.Instance.SearchRemoteAsync(query, _selectedFilter);
+                    }
+                }
+                else
+                {
+                    ApplyCurrentDirectoryFilter();
+                }
+            }
+        }
+
+        private void ApplyCurrentDirectoryFilter()
+        {
+            if (SearchStatusText == null || _displayedItems == null || _cachedDirectoryItems == null) return;
+
+            string query = SearchBox?.Text?.Trim() ?? "";
+
+            var filtered = _cachedDirectoryItems.Where(item =>
+            {
+                // Category filtering
+                if (_selectedFilter == "FOLDER" && !item.IsDirectory) return false;
+                if (_selectedFilter != "ALL" && _selectedFilter != "FOLDER")
+                {
+                    if (item.IsDirectory) return false;
+                    if (!item.Type.Equals(_selectedFilter, StringComparison.OrdinalIgnoreCase)) return false;
+                }
+
+                // Query text matching
+                if (!string.IsNullOrEmpty(query))
+                {
+                    if (!item.Name.Contains(query, StringComparison.OrdinalIgnoreCase)) return false;
+                }
+
+                return true;
+            }).ToList();
+
+            _displayedItems.Clear();
+            foreach (var item in filtered)
+            {
+                _displayedItems.Add(item);
+            }
+
+            if (!string.IsNullOrEmpty(query))
+            {
+                SearchStatusText.Text = $"{_displayedItems.Count} item(s) matching '{query}' in current folder";
+            }
+            else
+            {
+                SearchStatusText.Text = $"{_displayedItems.Count} item(s) in folder";
+            }
+        }
+
+        private void OnRemoteDirectoryChanged(object? sender, BrowseResponseEventArgs e)
+        {
+            DispatcherQueue.TryEnqueue(() =>
+            {
+                SearchProgressBar.Visibility = Visibility.Collapsed;
+
+                if (!string.IsNullOrEmpty(e.ErrorMessage))
+                {
+                    _displayedItems.Clear();
+                    SearchStatusText.Text = e.ErrorMessage;
+                    return;
+                }
+
+                _isGlobalSearchActive = false;
+                _currentRemotePath = e.CurrentPath;
+                _parentRemotePath = e.ParentPath;
+
+                CurrentPathText.Text = (e.CurrentPath == "ROOT") ? "Android Libraries" : e.CurrentPath;
+                NavUpButton.IsEnabled = !string.IsNullOrEmpty(e.ParentPath) || (e.CurrentPath != "ROOT");
+
+                _cachedDirectoryItems = e.Items;
+                ApplyCurrentDirectoryFilter();
+            });
+        }
+
+        private void OnRemoteResultsReceived(object? sender, SearchResponseEventArgs e)
+        {
+            DispatcherQueue.TryEnqueue(() =>
+            {
+                SearchProgressBar.Visibility = Visibility.Collapsed;
+
+                if (!string.IsNullOrEmpty(e.ErrorMessage))
+                {
+                    _displayedItems.Clear();
+                    SearchStatusText.Text = e.ErrorMessage;
+                    return;
+                }
+
+                _isGlobalSearchActive = true;
+                _displayedItems.Clear();
+                foreach (var item in e.Results)
+                {
+                    _displayedItems.Add(new RemoteBrowserItem
+                    {
+                        Id = item.Id,
+                        Name = item.Name,
+                        IsDirectory = false,
+                        Size = item.Size,
+                        Type = item.Type
+                    });
+                }
+
+                SearchStatusText.Text = e.Results.Count > 0
+                    ? $"{e.Results.Count} file{(e.Results.Count > 1 ? "s" : "")} found across Android storage"
+                    : "No matching files found on Android phone";
+            });
+        }
+
+        private async void SearchResultsList_ItemClick(object sender, ItemClickEventArgs e)
+        {
+            if (e.ClickedItem is RemoteBrowserItem item)
+            {
+                if (item.IsDirectory)
+                {
+                    NavigateToDirectory(item.Id);
+                }
+                else
+                {
+                    SearchStatusText.Text = $"Streaming remote preview for '{item.Name}'...";
+                    await SearchService.Instance.RequestRemoteStreamAsync(item.Id, isPreview: true);
+                }
+            }
+        }
+
+        private async void PreviewItem_Click(object sender, RoutedEventArgs e)
+        {
+            if (sender is FrameworkElement fe && fe.Tag is string fileId)
+            {
+                var item = _displayedItems.FirstOrDefault(r => r.Id == fileId)
+                           ?? _cachedDirectoryItems.FirstOrDefault(r => r.Id == fileId);
+                string name = item?.Name ?? "file";
+                SearchStatusText.Text = $"Streaming remote preview for '{name}'...";
+                await SearchService.Instance.RequestRemoteStreamAsync(fileId, isPreview: true);
+            }
+        }
+
+        private async void SaveItem_Click(object sender, RoutedEventArgs e)
+        {
+            if (sender is FrameworkElement fe && fe.Tag is string fileId)
+            {
+                var item = _displayedItems.FirstOrDefault(r => r.Id == fileId)
+                           ?? _cachedDirectoryItems.FirstOrDefault(r => r.Id == fileId);
+                string name = item?.Name ?? "file";
+                SearchStatusText.Text = $"Downloading '{name}' to PC Downloads...";
+                await SearchService.Instance.RequestRemoteStreamAsync(fileId, isPreview: false);
+            }
+        }
+        #endregion
+
+        #region Android Photo & Video Gallery UI Logic
+        private async Task LoadGalleryBucketAsync(string bucket)
+        {
+            GalleryProgressBar.Visibility = Visibility.Visible;
+            GalleryStatusText.Text = $"Loading {bucket} photos from Android phone...";
+            await GalleryService.Instance.RequestGalleryAsync(bucket, 60);
+        }
+
+        private void GalleryRefreshButton_Click(object sender, RoutedEventArgs e)
+        {
+            _ = GalleryService.Instance.RequestAlbumsAsync();
+            _ = LoadGalleryBucketAsync(_selectedGalleryBucket);
+        }
+
+        private void OnGalleryAlbumsReceived(object? sender, List<GalleryAlbumItem> albums)
+        {
+            DispatcherQueue.TryEnqueue(() =>
+            {
+                if (GalleryAlbumsPanel == null) return;
+                GalleryAlbumsPanel.Children.Clear();
+
+                foreach (var album in albums)
+                {
+                    var btn = new Button
+                    {
+                        Content = album.DisplayTitle,
+                        Tag = album.Id,
+                        CornerRadius = new CornerRadius(6),
+                        FontSize = 12
+                    };
+
+                    if (album.Id == _selectedGalleryBucket)
+                    {
+                        btn.Style = (Style)Application.Current.Resources["AccentButtonStyle"];
+                    }
+
+                    btn.Click += (s, e) =>
+                    {
+                        if (s is Button clickedBtn && clickedBtn.Tag is string bucketId)
+                        {
+                            _selectedGalleryBucket = bucketId;
+                            foreach (var child in GalleryAlbumsPanel.Children.OfType<Button>())
+                            {
+                                if (child.Tag is string bId && bId == bucketId)
+                                {
+                                    child.Style = (Style)Application.Current.Resources["AccentButtonStyle"];
+                                }
+                                else
+                                {
+                                    child.Style = (Style)Application.Current.Resources["DefaultButtonStyle"];
+                                }
+                            }
+                            _ = LoadGalleryBucketAsync(bucketId);
+                        }
+                    };
+
+                    GalleryAlbumsPanel.Children.Add(btn);
+                }
+            });
+        }
+
+        private void OnGalleryReceived(object? sender, GalleryResponseEventArgs e)
+        {
+            DispatcherQueue.TryEnqueue(() =>
+            {
+                GalleryProgressBar.Visibility = Visibility.Collapsed;
+
+                if (!string.IsNullOrEmpty(e.ErrorMessage))
+                {
+                    GalleryStatusText.Text = e.ErrorMessage;
+                    return;
+                }
+
+                _galleryItems.Clear();
+                GalleryCountBadge.Text = $"{e.Items.Count} item{(e.Items.Count != 1 ? "s" : "")}";
+                GalleryStatusText.Text = $"Showing {e.Items.Count} photo{(e.Items.Count != 1 ? "s" : "")} from Android phone ({e.Bucket})";
+
+                foreach (var item in e.Items)
+                {
+                    _galleryItems.Add(item);
+                    item.LoadThumbnail(DispatcherQueue);
+                }
+            });
+        }
+
+        private async void GalleryGridView_ItemClick(object sender, ItemClickEventArgs e)
+        {
+            if (e.ClickedItem is GalleryItem item)
+            {
+                GalleryStatusText.Text = $"Streaming full resolution preview for '{item.Name}'...";
+                await SearchService.Instance.RequestRemoteStreamAsync(item.Id, isPreview: true);
+            }
+        }
+
+        private async void PreviewGalleryItem_Click(object sender, RoutedEventArgs e)
+        {
+            if (sender is FrameworkElement fe && fe.Tag is string fileId)
+            {
+                var item = _galleryItems.FirstOrDefault(i => i.Id == fileId);
+                string name = item?.Name ?? "photo";
+                GalleryStatusText.Text = $"Streaming full resolution preview for '{name}'...";
+                await SearchService.Instance.RequestRemoteStreamAsync(fileId, isPreview: true);
+            }
+        }
+
+        private async void SaveGalleryItem_Click(object sender, RoutedEventArgs e)
+        {
+            if (sender is FrameworkElement fe && fe.Tag is string fileId)
+            {
+                var item = _galleryItems.FirstOrDefault(i => i.Id == fileId);
+                string name = item?.Name ?? "photo";
+                GalleryStatusText.Text = $"Downloading '{name}' to PC Downloads...";
+                await SearchService.Instance.RequestRemoteStreamAsync(fileId, isPreview: false);
+            }
+        }
+        #endregion
     }
 
     public class StandardCommand : ICommand

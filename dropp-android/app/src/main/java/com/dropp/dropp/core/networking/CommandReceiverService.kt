@@ -4,8 +4,11 @@ import android.content.Context
 import android.util.Log
 import com.dropp.dropp.core.security.EncryptionHelper
 import com.dropp.dropp.core.security.SecurityManager
+import android.net.Uri
 import com.dropp.dropp.services.DroppBackgroundService
+import com.dropp.dropp.services.FileTransferManager
 import com.dropp.dropp.services.NotificationSyncService
+import com.dropp.dropp.services.SearchManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -196,6 +199,53 @@ object CommandReceiverService {
                     if (enabled) {
                         com.dropp.dropp.services.AudioRoutingManager.connectA2dp(context)
                     }
+                }
+
+                "SEARCH_REQ" -> {
+                    SearchManager.handleSearchRequest(context, json)
+                }
+
+                "SEARCH_RES" -> {
+                    SearchManager.handleSearchResponse(json)
+                }
+
+                "BROWSE_REQ" -> {
+                    com.dropp.dropp.services.FileBrowserManager.handleBrowseRequest(context, json)
+                }
+
+                "BROWSE_RES" -> {
+                    com.dropp.dropp.services.FileBrowserManager.handleBrowseResponse(json)
+                }
+
+                "GALLERY_REQ" -> {
+                    com.dropp.dropp.services.GalleryManager.handleGalleryRequest(context, json)
+                }
+
+                "GALLERY_ALBUMS_REQ" -> {
+                    com.dropp.dropp.services.GalleryManager.handleAlbumsRequest(context, json)
+                }
+
+                "STREAM_REQ" -> {
+                    val fileId = json.optString("id").ifEmpty { json.optString("Id") }
+                    val isPreview = if (json.has("isPreview")) json.optBoolean("isPreview") else json.optBoolean("IsPreview", false)
+                    Log.i("dropp", "Received STREAM_REQ for id=$fileId, isPreview=$isPreview")
+                    if (fileId.isNotEmpty()) {
+                        val uri = Uri.parse(fileId)
+                        val ftm = DroppBackgroundService.fileTransferManager ?: FileTransferManager(context)
+                        ftm.sendFile(uri, isPreview)
+                    }
+                }
+
+                "DISCOVERY_PING" -> {
+                    val pong = JSONObject().apply {
+                        put("type", "DISCOVERY_PONG")
+                        put("Type", "DISCOVERY_PONG")
+                    }
+                    CommandTransferManager.sendCommand(context, pong.toString())
+                }
+
+                "DISCOVERY_PONG" -> {
+                    Log.i("dropp", "Received DISCOVERY_PONG from Windows. Active link confirmed.")
                 }
 
                 else -> {
