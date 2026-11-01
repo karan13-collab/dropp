@@ -1,0 +1,7 @@
+# AI Agent & Context Files
+.agents/
+dropp-android/CLAUDE.md
+
+# OS & Temp Files
+.DS_Store
+Thumbs.db

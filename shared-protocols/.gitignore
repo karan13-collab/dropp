@@ -1,0 +1,6 @@
+# Requested Exclusions
+features.docx
+
+# Microsoft Word Temp/Lock Files
+~$*.docx
+~$*.doc

@@ -1,15 +1,20 @@
+# IDE (Android Studio / IntelliJ)
+.idea/
 *.iml
-.gradle
-/local.properties
-/.idea/caches
-/.idea/libraries
-/.idea/modules.xml
-/.idea/workspace.xml
-/.idea/navEditor.xml
-/.idea/assetWizardSettings.xml
-.DS_Store
-/build
-/captures
-.externalNativeBuild
-.cxx
 local.properties
+
+# Gradle & Build Artifacts
+.gradle/
+/build/
+*/build/
+!gradle-wrapper.jar
+
+# Android Specific
+captures/
+.externalNativeBuild/
+.cxx/
+
+# Local Keystores
+*.jks
+*.keystore
+*.properties
