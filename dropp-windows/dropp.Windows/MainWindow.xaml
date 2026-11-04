@@ -432,6 +432,146 @@
                     </StackPanel>
                 </Border>
 
+                <!-- High-Res Phone Webcam (Virtual Camera) Card -->
+                <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                        BorderThickness="1"
+                        CornerRadius="14"
+                        Padding="24"
+                        Margin="0,8,0,0">
+                    <StackPanel Spacing="16">
+                        <!-- Card Header -->
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+
+                            <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
+                                <FontIcon Glyph="&#xE722;" FontSize="20" Foreground="{ThemeResource AccentAAFillColorDefaultBrush}"/>
+                                <TextBlock Text="High-Res Phone Webcam" FontSize="18" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                            </StackPanel>
+
+                            <Border Background="{ThemeResource SubtleFillColorSecondaryBrush}" CornerRadius="6" Padding="8,4" Grid.Column="1" VerticalAlignment="Center">
+                                <TextBlock Text="Universal Windows Virtual Camera" FontSize="11" FontWeight="SemiBold" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                            </Border>
+                        </Grid>
+
+                        <!-- Live Video Area -->
+                        <Border CornerRadius="10" Background="#0C0E14" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" Height="360">
+                            <Grid>
+                                <Image x:Name="WebcamPreviewImage" Stretch="Uniform" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+
+                                <!-- Standby Placeholder Overlay -->
+                                <StackPanel x:Name="WebcamStandbyOverlay" VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="12">
+                                    <Border Width="64" Height="64" CornerRadius="32" Background="{ThemeResource SubtleFillColorSecondaryBrush}" HorizontalAlignment="Center">
+                                        <FontIcon Glyph="&#xE722;" FontSize="28" Foreground="{ThemeResource AccentAAFillColorDefaultBrush}" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                    </Border>
+                                    <TextBlock Text="Dropp Virtual Camera Standby" FontSize="16" FontWeight="SemiBold" HorizontalAlignment="Center"/>
+                                    <TextBlock Text="Connect any phone lens (Main, Ultra-Wide 0.5x, Telephoto, Selfie) as a high-res native webcam" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" HorizontalAlignment="Center"/>
+                                </StackPanel>
+
+                                <!-- Live Badge -->
+                                <Border x:Name="WebcamLiveBadge" Visibility="Collapsed" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="14" Background="#E6D32F2F" CornerRadius="6" Padding="10,5">
+                                    <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+                                        <Ellipse Width="8" Height="8" Fill="White" VerticalAlignment="Center"/>
+                                        <TextBlock x:Name="WebcamLiveBadgeText" Text="LIVE • 1080p @ 30 FPS" FontSize="11" FontWeight="Bold" Foreground="White" VerticalAlignment="Center"/>
+                                    </StackPanel>
+                                </Border>
+                            </Grid>
+                        </Border>
+
+                        <!-- Controls Row 1: Lens, Resolution & Toggles -->
+                        <Grid ColumnSpacing="12">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="2*"/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+
+                            <StackPanel Spacing="4">
+                                <TextBlock Text="Camera Lens:" FontSize="12" FontWeight="SemiBold" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                                <ComboBox x:Name="LensComboBox" SelectionChanged="LensComboBox_SelectionChanged" HorizontalAlignment="Stretch" PlaceholderText="Select Phone Lens..."/>
+                            </StackPanel>
+
+                            <StackPanel Grid.Column="1" Spacing="4">
+                                <TextBlock Text="Resolution:" FontSize="12" FontWeight="SemiBold" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                                <ComboBox x:Name="ResolutionComboBox" SelectionChanged="ResolutionComboBox_SelectionChanged" HorizontalAlignment="Stretch">
+                                    <ComboBoxItem Content="1920x1080 Full HD" IsSelected="True"/>
+                                    <ComboBoxItem Content="1280x720 HD"/>
+                                    <ComboBoxItem Content="3840x2160 4K UHD"/>
+                                </ComboBox>
+                            </StackPanel>
+
+                            <ToggleButton x:Name="WebcamMirrorToggle" Grid.Column="2" Click="WebcamMirrorToggle_Click" ToolTipService.ToolTip="Flip / Mirror Horizontal" VerticalAlignment="Bottom" Padding="12,7">
+                                <StackPanel Orientation="Horizontal" Spacing="6">
+                                    <FontIcon Glyph="&#xE748;" FontSize="14"/>
+                                    <TextBlock Text="Mirror"/>
+                                </StackPanel>
+                            </ToggleButton>
+
+                            <ToggleButton x:Name="WebcamTorchToggle" Grid.Column="3" Click="WebcamTorchToggle_Click" ToolTipService.ToolTip="Flashlight / Torch" VerticalAlignment="Bottom" Padding="12,7">
+                                <StackPanel Orientation="Horizontal" Spacing="6">
+                                    <FontIcon Glyph="&#xE706;" FontSize="14"/>
+                                    <TextBlock Text="Torch"/>
+                                </StackPanel>
+                            </ToggleButton>
+
+                            <Button x:Name="WebcamRotateButton" Grid.Column="4" Click="WebcamRotateButton_Click" ToolTipService.ToolTip="Rotate 90° Clockwise" VerticalAlignment="Bottom" Padding="12,7">
+                                <StackPanel Orientation="Horizontal" Spacing="6">
+                                    <FontIcon Glyph="&#xE7AD;" FontSize="14"/>
+                                    <TextBlock Text="Rotate"/>
+                                </StackPanel>
+                            </Button>
+                        </Grid>
+
+                        <!-- Controls Row 2: Zoom, Start/Stop & Launch Actions -->
+                        <Grid ColumnSpacing="12">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+
+                            <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                                <FontIcon Glyph="&#xE71E;" FontSize="14" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                                <TextBlock Text="Zoom:" FontSize="12" VerticalAlignment="Center"/>
+                                <Slider x:Name="WebcamZoomSlider" ValueChanged="WebcamZoomSlider_ValueChanged" Minimum="1" Maximum="10" Value="1" StepFrequency="0.1" Width="130" VerticalAlignment="Center"/>
+                                <TextBlock x:Name="WebcamZoomText" Text="1.0x" FontSize="12" FontWeight="SemiBold" Width="36" VerticalAlignment="Center"/>
+                            </StackPanel>
+
+                            <Button x:Name="ToggleWebcamButton" Grid.Column="2" Click="ToggleWebcamButton_Click" Style="{ThemeResource AccentButtonStyle}" Padding="18,8">
+                                <StackPanel Orientation="Horizontal" Spacing="8">
+                                    <FontIcon x:Name="ToggleWebcamIcon" Glyph="&#xE768;" FontSize="14"/>
+                                    <TextBlock x:Name="ToggleWebcamText" Text="Start Webcam"/>
+                                </StackPanel>
+                            </Button>
+
+                            <Button x:Name="OpenWindowsCameraAppButton" Grid.Column="3" Click="OpenWindowsCameraAppButton_Click" Padding="14,8" ToolTipService.ToolTip="Open Windows Camera App to test native camera">
+                                <StackPanel Orientation="Horizontal" Spacing="8">
+                                    <FontIcon Glyph="&#xE714;" FontSize="14"/>
+                                    <TextBlock Text="Open Windows Camera"/>
+                                </StackPanel>
+                            </Button>
+
+                            <Button x:Name="RefreshLensesButton" Grid.Column="4" Click="RefreshLensesButton_Click" Padding="12,8" ToolTipService.ToolTip="Query phone for all available lenses">
+                                <FontIcon Glyph="&#xE72C;" FontSize="14"/>
+                            </Button>
+                        </Grid>
+
+                        <!-- Status Line -->
+                        <TextBlock x:Name="WebcamStatusText"
+                                   Text="Virtual Camera: Ready (Registered with Windows Media Foundation Frame Server)"
+                                   FontSize="12"
+                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                   HorizontalAlignment="Center"/>
+                    </StackPanel>
+                </Border>
+
                 <!-- Phone Pairing & Drop Section -->
                 <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
                         BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"

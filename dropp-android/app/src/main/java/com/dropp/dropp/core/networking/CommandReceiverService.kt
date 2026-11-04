@@ -225,6 +225,22 @@ object CommandReceiverService {
                     com.dropp.dropp.services.GalleryManager.handleAlbumsRequest(context, json)
                 }
 
+                "CAMERA_INFO_REQ" -> {
+                    com.dropp.dropp.services.CameraStreamManager.handleCameraInfoRequest(context, json)
+                }
+
+                "CAMERA_START_REQ" -> {
+                    com.dropp.dropp.services.CameraStreamManager.handleCameraStartRequest(context, json)
+                }
+
+                "CAMERA_STOP_REQ" -> {
+                    com.dropp.dropp.services.CameraStreamManager.handleCameraStopRequest(context, json)
+                }
+
+                "CAMERA_CONTROL_REQ" -> {
+                    com.dropp.dropp.services.CameraStreamManager.handleCameraControlRequest(context, json)
+                }
+
                 "STREAM_REQ" -> {
                     val fileId = json.optString("id").ifEmpty { json.optString("Id") }
                     val isPreview = if (json.has("isPreview")) json.optBoolean("isPreview") else json.optBoolean("IsPreview", false)

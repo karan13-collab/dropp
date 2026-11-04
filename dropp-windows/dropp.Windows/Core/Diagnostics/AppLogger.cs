@@ -20,14 +20,26 @@ namespace dropp.Windows.Core.Diagnostics
                 {
                     try
                     {
-                        string localFolder = global::Windows.Storage.ApplicationData.Current.LocalFolder.Path;
-                        _logFilePath = Path.Combine(localFolder, "dropp.log");
+                        string droppDir = @"C:\ProgramData\Dropp";
+                        if (!Directory.Exists(droppDir))
+                        {
+                            Directory.CreateDirectory(droppDir);
+                        }
+                        _logFilePath = Path.Combine(droppDir, "dropp.log");
                     }
                     catch
                     {
-                        string fallbackDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads", "dropp");
-                        Directory.CreateDirectory(fallbackDir);
-                        _logFilePath = Path.Combine(fallbackDir, "dropp.log");
+                        try
+                        {
+                            string localFolder = global::Windows.Storage.ApplicationData.Current.LocalFolder.Path;
+                            _logFilePath = Path.Combine(localFolder, "dropp.log");
+                        }
+                        catch
+                        {
+                            string fallbackDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads", "dropp");
+                            Directory.CreateDirectory(fallbackDir);
+                            _logFilePath = Path.Combine(fallbackDir, "dropp.log");
+                        }
                     }
                 }
 

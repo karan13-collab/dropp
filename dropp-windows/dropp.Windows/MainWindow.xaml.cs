@@ -37,6 +37,9 @@ namespace dropp.Windows
         private readonly ObservableCollection<GalleryItem> _galleryItems = new();
         private string _selectedGalleryBucket = "CAMERA";
 
+        private SoftwareBitmapSource? _webcamSource;
+        private bool _isUpdatingWebcamPreview = false;
+
         public ICommand TrayDoubleClickCommand { get; }
         public ICommand OpenAppCommand { get; }
         public ICommand QuitAppCommand { get; }
@@ -119,6 +122,13 @@ namespace dropp.Windows
             BluetoothAudioSinkService.Instance.SinkStatusChanged += OnSinkStatusChanged;
             _ = BluetoothAudioSinkService.Instance.StartAsync();
 
+            // Setup High-Res Phone Webcam
+            WebcamService.Instance.LensesReceived += OnWebcamLensesReceived;
+            WebcamService.Instance.FrameReceived += OnWebcamFrameReceived;
+            WebcamService.Instance.StreamingStateChanged += OnWebcamStreamingStateChanged;
+            WebcamService.Instance.StatusChanged += OnWebcamStatusChanged;
+            WebcamService.Instance.FpsUpdated += OnWebcamFpsUpdated;
+
             if (Content is FrameworkElement fe)
             {
                 fe.Loaded += MainWindow_Loaded;
@@ -128,6 +138,7 @@ namespace dropp.Windows
         private async void MainWindow_Loaded(object sender, RoutedEventArgs e)
         {
             await CheckAndPromptFirstRunSetupAsync();
+            _ = WebcamService.Instance.RequestLensesAsync();
         }
 
         private async Task CheckAndPromptFirstRunSetupAsync()
@@ -875,6 +886,206 @@ namespace dropp.Windows
                 string name = item?.Name ?? "photo";
                 GalleryStatusText.Text = $"Downloading '{name}' to PC Downloads...";
                 await SearchService.Instance.RequestRemoteStreamAsync(fileId, isPreview: false);
+            }
+        }
+        #endregion
+
+        #region Phone Webcam & Virtual Camera Methods
+        private void OnWebcamLensesReceived(List<CameraLensModel> lenses)
+        {
+            DispatcherQueue.TryEnqueue(() =>
+            {
+                var previousSelected = LensComboBox.SelectedItem as CameraLensModel;
+                LensComboBox.ItemsSource = null;
+                LensComboBox.ItemsSource = lenses;
+
+                if (lenses.Count > 0)
+                {
+                    var match = lenses.FirstOrDefault(l => previousSelected != null && l.Id == previousSelected.Id)
+                                ?? lenses.FirstOrDefault(l => l.Facing == "BACK" && l.LensType == "WIDE")
+                                ?? lenses[0];
+                    LensComboBox.SelectedItem = match;
+                }
+
+                WebcamStatusText.Text = $"Discovered {lenses.Count} phone lenses. Virtual Camera ready.";
+            });
+        }
+
+        private void OnWebcamFrameReceived(global::Windows.Graphics.Imaging.SoftwareBitmap bitmap)
+        {
+            if (_isUpdatingWebcamPreview) return;
+            _isUpdatingWebcamPreview = true;
+
+            DispatcherQueue.TryEnqueue(async () =>
+            {
+                try
+                {
+                    if (_webcamSource == null)
+                    {
+                        _webcamSource = new SoftwareBitmapSource();
+                        WebcamPreviewImage.Source = _webcamSource;
+                    }
+                    await _webcamSource.SetBitmapAsync(bitmap);
+                }
+                catch { }
+                finally
+                {
+                    _isUpdatingWebcamPreview = false;
+                }
+            });
+        }
+
+        private void OnWebcamStreamingStateChanged(bool isStreaming)
+        {
+            DispatcherQueue.TryEnqueue(() =>
+            {
+                if (isStreaming)
+                {
+                    WebcamStandbyOverlay.Visibility = Visibility.Collapsed;
+                    WebcamLiveBadge.Visibility = Visibility.Visible;
+                    ToggleWebcamIcon.Glyph = "\uE71A"; // Stop icon
+                    ToggleWebcamText.Text = "Stop Webcam";
+                    ToggleWebcamButton.Style = (Style)Application.Current.Resources["DefaultButtonStyle"];
+                }
+                else
+                {
+                    WebcamStandbyOverlay.Visibility = Visibility.Visible;
+                    WebcamLiveBadge.Visibility = Visibility.Collapsed;
+                    ToggleWebcamIcon.Glyph = "\uE768"; // Play icon
+                    ToggleWebcamText.Text = "Start Webcam";
+                    ToggleWebcamButton.Style = (Style)Application.Current.Resources["AccentButtonStyle"];
+                    WebcamPreviewImage.Source = null;
+                    _webcamSource = null;
+                }
+            });
+        }
+
+        private void OnWebcamStatusChanged(string status)
+        {
+            DispatcherQueue.TryEnqueue(() =>
+            {
+                WebcamStatusText.Text = status;
+            });
+        }
+
+        private void OnWebcamFpsUpdated(double fps)
+        {
+            DispatcherQueue.TryEnqueue(() =>
+            {
+                string res = WebcamService.Instance.CurrentResolution;
+                WebcamLiveBadgeText.Text = $"LIVE • {res} @ {fps:F0} FPS";
+            });
+        }
+
+        private async void ToggleWebcamButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (WebcamService.Instance.IsStreaming)
+            {
+                await WebcamService.Instance.StopStreamingAsync();
+            }
+            else
+            {
+                var selectedLens = LensComboBox.SelectedItem as CameraLensModel;
+                if (selectedLens == null && WebcamService.Instance.AvailableLenses.Count > 0)
+                {
+                    selectedLens = WebcamService.Instance.AvailableLenses[0];
+                    LensComboBox.SelectedItem = selectedLens;
+                }
+
+                if (selectedLens == null)
+                {
+                    WebcamStatusText.Text = "Querying phone lenses first...";
+                    await WebcamService.Instance.RequestLensesAsync();
+                    await Task.Delay(500);
+                    selectedLens = LensComboBox.SelectedItem as CameraLensModel 
+                                   ?? WebcamService.Instance.AvailableLenses.FirstOrDefault();
+                }
+
+                if (selectedLens == null)
+                {
+                    WebcamStatusText.Text = "Cannot find phone lenses. Ensure dropp is open on phone.";
+                    return;
+                }
+
+                string res = "1920x1080";
+                if (ResolutionComboBox.SelectedItem is ComboBoxItem cbi && cbi.Content is string s)
+                {
+                    res = s.Split(' ')[0];
+                }
+
+                await WebcamService.Instance.StartStreamingAsync(selectedLens, res);
+            }
+        }
+
+        private async void LensComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (LensComboBox.SelectedItem is CameraLensModel newLens && WebcamService.Instance.IsStreaming)
+            {
+                if (WebcamService.Instance.CurrentLens?.Id != newLens.Id)
+                {
+                    await WebcamService.Instance.SwitchLensAsync(newLens);
+                }
+            }
+        }
+
+        private async void ResolutionComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (WebcamService.Instance.IsStreaming)
+            {
+                var lens = WebcamService.Instance.CurrentLens;
+                if (lens != null)
+                {
+                    string res = "1920x1080";
+                    if (ResolutionComboBox.SelectedItem is ComboBoxItem cbi && cbi.Content is string s)
+                    {
+                        res = s.Split(' ')[0];
+                    }
+                    await WebcamService.Instance.StartStreamingAsync(lens, res);
+                }
+            }
+        }
+
+        private void WebcamMirrorToggle_Click(object sender, RoutedEventArgs e)
+        {
+            WebcamService.Instance.IsMirrored = WebcamMirrorToggle.IsChecked == true;
+        }
+
+        private void WebcamRotateButton_Click(object sender, RoutedEventArgs e)
+        {
+            WebcamService.Instance.ManualRotationAngle = (WebcamService.Instance.ManualRotationAngle + 90) % 360;
+            WebcamStatusText.Text = $"Camera rotation: {WebcamService.Instance.ManualRotationAngle}°";
+        }
+
+        private async void WebcamTorchToggle_Click(object sender, RoutedEventArgs e)
+        {
+            await WebcamService.Instance.SetTorchAsync(WebcamTorchToggle.IsChecked == true);
+        }
+
+        private async void WebcamZoomSlider_ValueChanged(object sender, Microsoft.UI.Xaml.Controls.Primitives.RangeBaseValueChangedEventArgs e)
+        {
+            float zoom = (float)Math.Round(e.NewValue, 1);
+            if (WebcamZoomText != null)
+            {
+                WebcamZoomText.Text = $"{zoom:F1}x";
+            }
+            await WebcamService.Instance.SetZoomAsync(zoom);
+        }
+
+        private async void RefreshLensesButton_Click(object sender, RoutedEventArgs e)
+        {
+            WebcamStatusText.Text = "Refreshing phone lenses...";
+            await WebcamService.Instance.RequestLensesAsync();
+        }
+
+        private void OpenWindowsCameraAppButton_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                Process.Start(new ProcessStartInfo("microsoft.windows.camera:") { UseShellExecute = true });
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Log("MainWindow", $"Failed to open Windows Camera App: {ex.Message}");
             }
         }
         #endregion

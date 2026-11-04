@@ -24,8 +24,9 @@ namespace dropp.Windows.Services
                 // 1. Check local settings / disk flag
                 if (IsFlagCompleted())
                 {
-                    // If marked completed, verify services are still automatic
-                    if (IsServiceAutomatic("BTAGService") && IsServiceAutomatic("BthServ"))
+                    // If marked completed, verify services and virtual camera are still registered
+                    bool isVcamRegistered = Registry.LocalMachine.OpenSubKey(@"Software\Classes\CLSID\{3cad447d-f283-4af4-a3b2-6f5363309f52}\InprocServer32") != null;
+                    if (IsServiceAutomatic("BTAGService") && IsServiceAutomatic("BthServ") && isVcamRegistered)
                     {
                         return false; // Already setup and running
                     }
@@ -96,7 +97,8 @@ namespace dropp.Windows.Services
                 "Set-Service -Name 'BthServ' -StartupType Automatic -ErrorAction SilentlyContinue; " +
                 "Start-Service -Name 'BthServ' -ErrorAction SilentlyContinue; " +
                 "New-NetFirewallRule -DisplayName 'dropp mDNS' -Direction Inbound -Protocol UDP -LocalPort 8765 -Action Allow -Profile Any -ErrorAction SilentlyContinue; " +
-                "New-NetFirewallRule -DisplayName 'dropp Services' -Direction Inbound -Protocol TCP -LocalPort 8767,5555,5556 -Action Allow -Profile Any -ErrorAction SilentlyContinue; " +
+                "New-NetFirewallRule -DisplayName 'dropp Services' -Direction Inbound -Protocol TCP -LocalPort 8767,5555,5556,8768 -Action Allow -Profile Any -ErrorAction SilentlyContinue; " +
+                "regsvr32.exe /s 'C:\\ProgramData\\Dropp\\DroppVirtualCamera.dll'; " +
                 "Get-PnpDevice -Class 'AudioEndpoint','Bluetooth' -Status OK -ErrorAction SilentlyContinue | Where-Object { $_.FriendlyName -match 'Hands-Free|Audio|Phone' } | Restart-PnpDevice -Confirm:$false -ErrorAction SilentlyContinue";
 
             var psi = new ProcessStartInfo

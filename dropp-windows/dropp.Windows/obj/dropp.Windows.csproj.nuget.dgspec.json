@@ -66,6 +66,10 @@
               "target": "Package",
               "version": "[2.5.1, )"
             },
+            "NAudio": {
+              "target": "Package",
+              "version": "[2.2.1, )"
+            },
             "QRCoder": {
               "target": "Package",
               "version": "[1.8.0, )"

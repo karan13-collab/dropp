@@ -28,6 +28,11 @@
     <uses-permission android:name="android.permission.BLUETOOTH" />
     <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" />
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />
+
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
+    <uses-feature android:name="android.hardware.camera.autofocus" android:required="false" />
 
     <application
         android:name=".DroppApplication"
@@ -64,7 +69,7 @@
         </activity>
         <service
             android:name=".services.DroppBackgroundService"
-            android:foregroundServiceType="dataSync|microphone|phoneCall"
+            android:foregroundServiceType="dataSync|microphone|phoneCall|camera"
             android:exported="false" />
         <service
             android:name=".services.MediaAudioService"

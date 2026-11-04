@@ -20,8 +20,34 @@ class DroppBackgroundService : Service() {
     private val CHANNEL_ID = "DroppForegroundServiceChannel"
     private val NOTIFICATION_ID = 1
     companion object {
+        var instance: DroppBackgroundService? = null
         var clipboardManager: ClipboardSyncManager? = null
         var fileTransferManager: FileTransferManager? = null
+
+        fun updateCameraForeground(enable: Boolean) {
+            val s = instance ?: return
+            try {
+                val syncNotification = NotificationCompat.Builder(s, "dropp_sync_2")
+                    .setContentTitle("dropp")
+                    .setContentText(if (enable) "Streaming live camera to PC..." else "Listening for PC clipboard and files...")
+                    .setSmallIcon(if (enable) android.R.drawable.ic_menu_camera else android.R.drawable.stat_notify_sync)
+                    .setOngoing(true)
+                    .build()
+
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    var types = ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+                    if (enable && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                        types = types or ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA
+                    }
+                    s.startForeground(1, syncNotification, types)
+                } else {
+                    s.startForeground(1, syncNotification)
+                }
+                Log.d("DroppService", "Updated foreground service type: enableCamera=$enable")
+            } catch (e: Exception) {
+                Log.w("DroppService", "Error updating foreground service type: ${e.message}")
+            }
+        }
     }
 
     private lateinit var nsdHelper: NsdHelper
@@ -31,9 +57,10 @@ class DroppBackgroundService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        instance = this
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
-                "dropp_sync_2", // <--- CHANGED HERE
+                "dropp_sync_2",
                 "Dropp Ecosystem Sync",
                 NotificationManager.IMPORTANCE_DEFAULT
             )
@@ -41,8 +68,7 @@ class DroppBackgroundService : Service() {
             manager.createNotificationChannel(channel)
         }
 
-// 2. Second, build the persistent notification using that exact channel ID
-        val syncNotification = NotificationCompat.Builder(this, "dropp_sync_2") // <--- CHANGED HERE
+        val syncNotification = NotificationCompat.Builder(this, "dropp_sync_2")
             .setContentTitle("dropp")
             .setContentText("Listening for PC clipboard and files...")
             .setSmallIcon(android.R.drawable.stat_notify_sync)
@@ -50,11 +76,11 @@ class DroppBackgroundService : Service() {
             .build()
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(
-                1,
-                syncNotification,
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
-            )
+            var types = ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                types = types or ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA
+            }
+            startForeground(1, syncNotification, types)
         } else {
             startForeground(1, syncNotification)
         }
@@ -77,6 +103,7 @@ class DroppBackgroundService : Service() {
         fileTransferManager.start()
         com.dropp.dropp.core.security.SecurityManager.init(this)
         com.dropp.dropp.core.networking.CommandReceiverService.startListening(this)
+        CameraStreamManager.startSocketServer()
         // Initialize and start Call Passthrough Manager
         CallPassthroughManager.start(this)
 

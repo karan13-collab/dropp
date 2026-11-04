@@ -440,6 +440,10 @@ namespace dropp.Windows.Services
                 {
                     _ = GalleryService.Instance.HandleIncomingAlbumsResponseAsync(json);
                 }
+                else if (type == "CAMERA_INFO_RES")
+                {
+                    WebcamService.Instance.HandleIncomingCameraInfoResponse(json);
+                }
                 else if (type == "STREAM_REQ")
                 {
                     string fileId = (json["id"] ?? json["Id"])?.ToString() ?? "";
