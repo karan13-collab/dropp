@@ -12,7 +12,7 @@ It deeply integrates into the native operating systems—utilizing the Android S
 
 ---
 
-## ✨ Current Features
+##  Current Features
 
 The foundational P2P engine is currently active and fully functional.
 
@@ -26,12 +26,12 @@ The foundational P2P engine is currently active and fully functional.
 - **Inline Replies:** Reply to WhatsApp, Telegram, or SMS directly from the Windows popup.
 - **Universal Clipboard v2:** Support for copying/pasting images, URLs, and rich files between devices.
 - **Instant Hotspot & Power Control:** Wake phone via Bluetooth to toggle cellular hotspot from the PC taskbar. Lock/unlock Windows from the phone.
-- **Cross-Device Search:** Securely index and search for PDFs, photos, or documents residing on your phone directly from the Windows Start Menu.
+- **Cross-Device Search:** Securely index and search for PDFs, photos, or documents residing on your phone.
 - **High-Res Wireless Webcam:** Mount your phone and use its main camera lenses natively in Zoom, Teams, or OBS on Windows (via Virtual Camera Driver).
 
 ---
 
-## 🚀 Roadmap
+##  Roadmap
 
 - [ ] **Cross-Control (KVM):** Move your Windows mouse past the edge of your monitor to seamlessly control your Android screen and type with your PC keyboard.
 - [ ] **Audio Routing / Call Passthrough:** Hand off Spotify audio to PC speakers, or route incoming cellular phone calls through the PC's microphone and WebRTC audio bridge.
@@ -43,7 +43,7 @@ The foundational P2P engine is currently active and fully functional.
 
 ---
 
-## 🛠️ Architecture & Tech Stack
+##  Architecture & Tech Stack
 
 **dropp** is built with modern, native frameworks to ensure minimal latency and battery drain.
 
@@ -54,7 +54,7 @@ The foundational P2P engine is currently active and fully functional.
 
 ---
 
-## 💻 Getting Started (For Developers)
+##  Getting Started (For Developers)
 
 Because dropp utilizes deep OS hooks, specific configurations are required to build and run the project locally.
 
@@ -80,8 +80,8 @@ Because dropp utilizes deep OS hooks, specific configurations are required to bu
 
 ---
 
-## 🤝 Contributing
+##  Contributing
 Contributions, issues, and feature requests are welcome! Because of the ambitious roadmap, developers with experience in **WebRTC, Windows Driver Development, or Android Accessibility Services** are highly encouraged to contribute.
 
-## 📄 License
+##  License
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
