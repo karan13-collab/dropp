@@ -12,7 +12,7 @@ It deeply integrates into the native operating systems—utilizing the Android S
 
 ---
 
-## ✨ Current Features (Engine & Core Integration)
+## ✨ Current Features
 
 The foundational P2P engine is currently active and fully functional.
 
@@ -22,31 +22,22 @@ The foundational P2P engine is currently active and fully functional.
   - **Android to Windows:** Select any file/photo > **Share** > **dropp**. Files land securely on your PC at gigabit Wi-Fi Direct/TCP speeds.
 - **Universal Clipboard (Beta):** Copy text on your phone and instantly paste it on your PC (and vice-versa).
 - **Background Execution:** Runs as an invisible, persistent utility on both devices.
+- **Notification Mirroring:** Android notifications appear as native Windows Toast notifications. Swiping away on PC clears them on the phone.
+- **Inline Replies:** Reply to WhatsApp, Telegram, or SMS directly from the Windows popup.
+- **Universal Clipboard v2:** Support for copying/pasting images, URLs, and rich files between devices.
+- **Instant Hotspot & Power Control:** Wake phone via Bluetooth to toggle cellular hotspot from the PC taskbar. Lock/unlock Windows from the phone.
+- **Cross-Device Search:** Securely index and search for PDFs, photos, or documents residing on your phone directly from the Windows Start Menu.
+- **High-Res Wireless Webcam:** Mount your phone and use its main camera lenses natively in Zoom, Teams, or OBS on Windows (via Virtual Camera Driver).
 
 ---
 
 ## 🚀 Roadmap
 
-dropp is evolving into a complete hardware-sharing and screen-virtualization suite. Here is the upcoming roadmap categorized by system complexity:
-
-### Tier 1: Seamless Data & Communications (In Progress)
-- [ ] **Notification Mirroring:** Android notifications appear as native Windows Toast notifications. Swiping away on PC clears them on the phone.
-- [ ] **Inline Replies:** Reply to WhatsApp, Telegram, or SMS directly from the Windows popup.
-- [ ] **Universal Clipboard v2:** Support for copying/pasting images, URLs, and rich files between devices.
-- [ ] **Instant Hotspot & Power Control:** Wake phone via Bluetooth to toggle cellular hotspot from the PC taskbar. Lock/unlock Windows from the phone.
-
-### Tier 2: Input & Control
 - [ ] **Cross-Control (KVM):** Move your Windows mouse past the edge of your monitor to seamlessly control your Android screen and type with your PC keyboard.
-- [ ] **Cross-Device Search:** Securely index and search for PDFs, photos, or documents residing on your phone directly from the Windows Start Menu.
-
-### Tier 3: Screen & Hardware Virtualization
-- [ ] **High-Res Wireless Webcam:** Mount your phone and use its main camera lenses natively in Zoom, Teams, or OBS on Windows (via Virtual Camera Driver).
 - [ ] **Audio Routing / Call Passthrough:** Hand off Spotify audio to PC speakers, or route incoming cellular phone calls through the PC's microphone and WebRTC audio bridge.
 - [ ] **Single App Streaming:** Launch an Android app from Windows; the UI streams into a floating Windows frame while processing locally on the phone.
 - [ ] **Secondary Display:** Use your smartphone or tablet as a wireless external monitor for Windows.
 - [ ] **Mobile Desktop Mode:** Cast a full, customized desktop UI from the phone to a Windows monitor.
-
-### Tier 4: AI-Driven Automation
 - [ ] **Contextual Share:** Highlight text on Windows and send it to the phone's local LLM to summarize or add to a calendar.
 - [ ] **Natural Language Routing:** Voice commands (e.g., *"Cast this video to my laptop"*) to automate the device handshake and protocol routing.
 
