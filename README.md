@@ -28,13 +28,13 @@ The foundational P2P engine is currently active and fully functional.
 - **Instant Hotspot & Power Control:** Wake phone via Bluetooth to toggle cellular hotspot from the PC taskbar. Lock/unlock Windows from the phone.
 - **Cross-Device Search:** Securely index and search for PDFs, photos, or documents residing on your phone.
 - **High-Res Wireless Webcam:** Mount your phone and use its main camera lenses natively in Zoom, Teams, or OBS on Windows (via Virtual Camera Driver).
+- **Audio Routing / Call Passthrough:** Hand off Spotify audio to PC speakers, or route incoming cellular phone calls through the PC's microphone and WebRTC audio bridge.
 
 ---
 
 ##  Roadmap
 
 - [ ] **Cross-Control (KVM):** Move your Windows mouse past the edge of your monitor to seamlessly control your Android screen and type with your PC keyboard.
-- [ ] **Audio Routing / Call Passthrough:** Hand off Spotify audio to PC speakers, or route incoming cellular phone calls through the PC's microphone and WebRTC audio bridge.
 - [ ] **Single App Streaming:** Launch an Android app from Windows; the UI streams into a floating Windows frame while processing locally on the phone.
 - [ ] **Secondary Display:** Use your smartphone or tablet as a wireless external monitor for Windows.
 - [ ] **Mobile Desktop Mode:** Cast a full, customized desktop UI from the phone to a Windows monitor.
