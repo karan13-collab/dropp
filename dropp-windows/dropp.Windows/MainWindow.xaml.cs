@@ -117,6 +117,7 @@ namespace dropp.Windows
             // Subscribe to Call Events and Audio Bridge State
             CommandReceiverService.CallEventReceived += OnCallEventReceived;
             CallAudioBridgeService.Instance.StateChanged += OnAudioBridgeStateChanged;
+            BluetoothHandsFreeService.Instance.HfpStatusChanged += OnHfpStatusChanged;
 
             // Subscribe to Bluetooth Audio Sink state and start background watcher
             BluetoothAudioSinkService.Instance.SinkStatusChanged += OnSinkStatusChanged;
@@ -187,16 +188,25 @@ namespace dropp.Windows
 
         private void OnCallEventReceived(object? sender, CallEventArgs e)
         {
+            // Show or update the Phone Link-style always-on-top Call Overlay Window
+            UI.CallOverlayWindow.ShowOrUpdate(DispatcherQueue, e);
+
             DispatcherQueue.TryEnqueue(() =>
             {
-                AppLogger.Log("UI", $"Updating Call UI: State={e.State}, Caller={e.CallerName}");
+                AppLogger.Log("UI", $"Updating Call UI: State={e.State}, App={e.AppName}, Type={e.CallType}, Caller={e.CallerName}");
+
+                string appLabel = !string.IsNullOrWhiteSpace(e.AppName)
+                    ? $"{e.AppName} Call"
+                    : (e.CallType == "VOIP" ? "VoIP Call" : "Cellular Call");
 
                 if (e.State == "RINGING")
                 {
                     CallerNameText.Text = !string.IsNullOrWhiteSpace(e.CallerName) ? e.CallerName : "Incoming Caller";
-                    CallerNumberText.Text = !string.IsNullOrWhiteSpace(e.PhoneNumber) ? e.PhoneNumber : "Cellular Call";
+                    CallerNumberText.Text = !string.IsNullOrWhiteSpace(e.PhoneNumber) && e.PhoneNumber != e.CallerName
+                        ? $"{appLabel} • {e.PhoneNumber}"
+                        : $"Incoming {appLabel}";
 
-                    CallStateBadgeText.Text = "Incoming Call...";
+                    CallStateBadgeText.Text = $"Incoming {appLabel}...";
                     try
                     {
                         CallStateBadge.Background = (Brush)Application.Current.Resources["SystemFillColorAttentionBackgroundBrush"];
@@ -207,16 +217,16 @@ namespace dropp.Windows
                     EndCallButton.Visibility = Visibility.Visible;
                     EndCallButtonText.Text = "Decline";
                     CallDurationText.Visibility = Visibility.Collapsed;
-
-                    // Unhide app window to alert user
-                    _appWindow?.Show();
+                    _callTimer.Stop();
                 }
                 else if (e.State == "ACTIVE")
                 {
                     CallerNameText.Text = !string.IsNullOrWhiteSpace(e.CallerName) ? e.CallerName : "Active Call";
-                    CallerNumberText.Text = !string.IsNullOrWhiteSpace(e.PhoneNumber) ? e.PhoneNumber : "Audio Routed to PC";
+                    CallerNumberText.Text = !string.IsNullOrWhiteSpace(e.PhoneNumber) && e.PhoneNumber != e.CallerName
+                        ? $"{appLabel} • {e.PhoneNumber}"
+                        : $"{appLabel} • Audio Routed to PC";
 
-                    CallStateBadgeText.Text = "Call Active - Audio Routed to PC";
+                    CallStateBadgeText.Text = $"{appLabel} Active - Audio on PC";
                     try
                     {
                         CallStateBadge.Background = (Brush)Application.Current.Resources["SystemFillColorSuccessBackgroundBrush"];
@@ -226,12 +236,15 @@ namespace dropp.Windows
                     AnswerCallButton.Visibility = Visibility.Collapsed;
                     EndCallButton.Visibility = Visibility.Visible;
                     EndCallButtonText.Text = "End Call";
-                    ToggleBridgeText.Text = "Stop Bridge";
+                    ToggleBridgeText.Text = "Transfer to Phone";
 
-                    _callStartTime = DateTime.UtcNow;
-                    CallDurationText.Text = "00:00";
+                    if (!_callTimer.IsEnabled)
+                    {
+                        _callStartTime = DateTime.UtcNow;
+                        CallDurationText.Text = "00:00";
+                        _callTimer.Start();
+                    }
                     CallDurationText.Visibility = Visibility.Visible;
-                    _callTimer.Start();
                 }
                 else if (e.State == "ENDED")
                 {
@@ -256,7 +269,7 @@ namespace dropp.Windows
                         {
                             CallStateBadgeText.Text = "No Active Call";
                             CallerNameText.Text = "Ready for Calls";
-                            CallerNumberText.Text = "Cellular audio will stream to PC";
+                            CallerNumberText.Text = "Cellular & VoIP calls (WhatsApp, Telegram, etc.) stream to PC";
                             CallDurationText.Visibility = Visibility.Collapsed;
                         }
                     };
@@ -265,24 +278,37 @@ namespace dropp.Windows
             });
         }
 
+        private void OnHfpStatusChanged(bool isConnected, string statusMessage)
+        {
+            DispatcherQueue.TryEnqueue(() =>
+            {
+                AudioBridgeStatusText.Text = $"Call Audio (HFP): {statusMessage}";
+            });
+        }
+
         private void OnAudioBridgeStateChanged(bool isConnected, string statusMessage)
         {
             DispatcherQueue.TryEnqueue(() =>
             {
-                AudioBridgeStatusText.Text = $"Audio Bridge: {statusMessage}";
+                if (isConnected)
+                {
+                    AudioBridgeStatusText.Text = $"Audio Bridge: {statusMessage}";
+                }
             });
         }
 
         private async void AnswerCallButton_Click(object sender, RoutedEventArgs e)
         {
             AppLogger.Log("UI", "User clicked Answer on PC");
-            // Call audio will route via Bluetooth SCO/HFP from Android
+            _ = BluetoothHandsFreeService.Instance.EnsureHfpConnectedAsync();
+            try { await Microsoft.Windows.AppNotifications.AppNotificationManager.Default.RemoveByTagAsync("active_call"); } catch { }
             await CommandReceiverService.SendCallCommandAsync("CALL_ANSWER");
         }
 
         private async void EndCallButton_Click(object sender, RoutedEventArgs e)
         {
             AppLogger.Log("UI", "User clicked End/Decline Call");
+            CommandReceiverService.NotifyLocalCallEnded();
             await CommandReceiverService.SendCallCommandAsync("CALL_END");
         }
 
@@ -326,24 +352,32 @@ namespace dropp.Windows
 
         private async void ToggleBridgeButton_Click(object sender, RoutedEventArgs e)
         {
-            // Toggle the Bluetooth SCO audio bridge on Android
-            await CommandReceiverService.SendCallCommandAsync(
-                ToggleBridgeText.Text == "Stop Bridge" ? "CALL_AUDIO_STOP" : "CALL_AUDIO_START");
-            ToggleBridgeText.Text = ToggleBridgeText.Text == "Stop Bridge" ? "Start Bridge" : "Stop Bridge";
+            bool currentlyOnPc = ToggleBridgeText.Text == "Stop Bridge" || ToggleBridgeText.Text == "Transfer to Phone";
+            if (!currentlyOnPc)
+            {
+                _ = BluetoothHandsFreeService.Instance.EnsureHfpConnectedAsync();
+            }
+            await CommandReceiverService.SendCallCommandAsync(currentlyOnPc ? "CALL_AUDIO_STOP" : "CALL_AUDIO_START");
+            ToggleBridgeText.Text = currentlyOnPc ? "Transfer to PC" : "Transfer to Phone";
         }
 
         private async void TestBridgeButton_Click(object sender, RoutedEventArgs e)
         {
-            AppLogger.Log("UI", "Requesting Android to start Bluetooth SCO audio bridge...");
-            AudioBridgeStatusText.Text = "Audio Bridge: Requesting Bluetooth SCO from phone...";
+            AppLogger.Log("UI", "Connecting Windows HFP Hands-Free & requesting Android Bluetooth SCO...");
+            AudioBridgeStatusText.Text = "Call Audio (HFP): Connecting Windows Hands-Free channel...";
+            bool hfpOk = await BluetoothHandsFreeService.Instance.EnsureHfpConnectedAsync();
             bool sent = await CommandReceiverService.SendCallCommandAsync("CALL_AUDIO_START");
-            if (sent)
+            if (hfpOk && sent)
             {
-                AudioBridgeStatusText.Text = "Audio Bridge: Bluetooth SCO start command sent to phone.";
+                AudioBridgeStatusText.Text = $"Call Audio (HFP): Connected ({BluetoothHandsFreeService.Instance.ActiveDeviceName}) & SCO requested.";
+            }
+            else if (sent)
+            {
+                AudioBridgeStatusText.Text = "Call Audio (HFP): SCO command sent to phone (check HFP status in logs).";
             }
             else
             {
-                AudioBridgeStatusText.Text = "Audio Bridge: Could not reach Android. Ensure phone is paired and on Wi-Fi.";
+                AudioBridgeStatusText.Text = "Call Audio (HFP): Could not reach Android over Wi-Fi.";
             }
         }
 

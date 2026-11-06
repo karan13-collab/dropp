@@ -18,6 +18,9 @@ namespace dropp.Windows.Services
         public string State { get; set; } = "IDLE";
         public string PhoneNumber { get; set; } = "";
         public string CallerName { get; set; } = "";
+        public string AppName { get; set; } = "";
+        public string CallType { get; set; } = "CELLULAR";
+        public bool? AudioOnPc { get; set; }
         public long Timestamp { get; set; }
     }
 
@@ -25,7 +28,28 @@ namespace dropp.Windows.Services
     {
         public const int CommandPort = 8767;
         public static event EventHandler<CallEventArgs>? CallEventReceived;
+        private static CallEventArgs? _lastCallArgs;
         private TcpListener? _listener;
+
+        public static void NotifyLocalCallEnded()
+        {
+            var endedArgs = new CallEventArgs
+            {
+                State = "ENDED",
+                PhoneNumber = _lastCallArgs?.PhoneNumber ?? "",
+                CallerName = _lastCallArgs?.CallerName ?? "",
+                AppName = _lastCallArgs?.AppName ?? "",
+                CallType = _lastCallArgs?.CallType ?? "CELLULAR",
+                Timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
+            };
+            _lastCallArgs = endedArgs;
+            try
+            {
+                _ = AppNotificationManager.Default.RemoveByTagAsync("active_call");
+            }
+            catch { }
+            CallEventReceived?.Invoke(null, endedArgs);
+        }
 
         private static string? _targetAndroidIp;
         public static string? TargetAndroidIp
@@ -154,10 +178,13 @@ namespace dropp.Windows.Services
                         {
                             addr = addr.MapToIPv4();
                         }
-                        string peerIp = addr.ToString();
-                        SetTargetAndroidIp(peerIp);
-                        App.ClipboardService?.SetTargetIp(peerIp);
-                        App.FileTransfer?.SetTargetIp(peerIp);
+                        if (!IPAddress.IsLoopback(addr))
+                        {
+                            string peerIp = addr.ToString();
+                            SetTargetAndroidIp(peerIp);
+                            App.ClipboardService?.SetTargetIp(peerIp);
+                            App.FileTransfer?.SetTargetIp(peerIp);
+                        }
                     }
 
                     _ = Task.Run(() => HandleClientAsync(client));
@@ -338,6 +365,9 @@ namespace dropp.Windows.Services
                     string state = (json["state"] ?? json["State"])?.ToString()?.ToUpperInvariant() ?? "IDLE";
                     string phoneNumber = (json["phoneNumber"] ?? json["PhoneNumber"])?.ToString() ?? "";
                     string callerName = (json["callerName"] ?? json["CallerName"])?.ToString() ?? "";
+                    string appName = (json["appName"] ?? json["AppName"])?.ToString() ?? "";
+                    string callType = (json["callType"] ?? json["CallType"])?.ToString()?.ToUpperInvariant() ?? "CELLULAR";
+                    bool? audioOnPc = json["audioOnPc"]?.GetValue<bool>() ?? json["AudioOnPc"]?.GetValue<bool>();
                     long timestamp = (json["timestamp"] ?? json["Timestamp"])?.GetValue<long>() ?? DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
 
                     var callArgs = new CallEventArgs
@@ -345,56 +375,57 @@ namespace dropp.Windows.Services
                         State = state,
                         PhoneNumber = phoneNumber,
                         CallerName = string.IsNullOrWhiteSpace(callerName) ? phoneNumber : callerName,
+                        AppName = appName,
+                        CallType = callType,
+                        AudioOnPc = audioOnPc,
                         Timestamp = timestamp
                     };
 
-                    AppLogger.Log("CommandReceiver", $"Received CALL_EVENT: State={state}, Caller={callArgs.CallerName}, Number={phoneNumber}");
+                    _lastCallArgs = callArgs;
+                    AppLogger.Log("CommandReceiver", $"Received CALL_EVENT: State={state}, App={appName}, Type={callType}, AudioOnPc={audioOnPc}, Caller={callArgs.CallerName}, Number={phoneNumber}");
+
+                    if (state == "RINGING" || (state == "ACTIVE" && audioOnPc != false))
+                    {
+                        // Proactively ensure Windows Bluetooth Hands-Free (PhoneLineTransportDevice) SLC is open!
+                        _ = BluetoothHandsFreeService.Instance.EnsureHfpConnectedAsync();
+                    }
+
+                    // Single unified call surface: CallOverlayWindow (Phone Link style) handles RINGING, ACTIVE, and ENDED.
+                    // Ensure any legacy toast with tag "active_call" is cleared so there are never duplicate call notifications.
+                    try
+                    {
+                        await AppNotificationManager.Default.RemoveByTagAsync("active_call");
+                    }
+                    catch { }
+
                     CallEventReceived?.Invoke(null, callArgs);
 
-                    if (state == "RINGING")
+                    string appLabel = !string.IsNullOrWhiteSpace(appName)
+                        ? $"{appName} Call"
+                        : (callType == "VOIP" ? "VoIP Call" : "Cellular Call");
+
+                    if (state == "ACTIVE")
                     {
-                        var callBuilder = new AppNotificationBuilder();
-                        callBuilder.AddText($"Incoming Call: {callArgs.CallerName}");
-                        if (!string.IsNullOrWhiteSpace(phoneNumber) && phoneNumber != callArgs.CallerName)
-                        {
-                            callBuilder.AddText(phoneNumber);
-                        }
-                        callBuilder.AddText("Cellular call ringing on phone");
-
-                        callBuilder.AddButton(new AppNotificationButton("Answer on PC")
-                            .AddArgument("actionType", "CALL_ANSWER"));
-
-                        callBuilder.AddButton(new AppNotificationButton("Decline")
-                            .AddArgument("actionType", "CALL_REJECT"));
-
-                        var notification = callBuilder.BuildNotification();
-                        notification.Tag = "active_call";
-                        notification.Group = "calls";
-                        AppNotificationManager.Default.Show(notification);
-                        AppLogger.Log("CommandReceiver", "Displayed incoming call toast notification.");
-                    }
-                    else if (state == "ACTIVE")
-                    {
-                        try
-                        {
-                            await AppNotificationManager.Default.RemoveByTagAsync("active_call");
-                        }
-                        catch { }
-
-                        // Call audio is routed via Bluetooth SCO/HFP natively from Android.
-                        // No TCP audio bridge or A2DP sink manipulation needed.
-                        AppLogger.Log("CommandReceiver", "Call ACTIVE -> Audio routed via Bluetooth HFP to PC.");
+                        BluetoothHandsFreeService.Instance.LogWasapiEndpoints("Call-ACTIVE");
+                        AppLogger.Log("CommandReceiver", $"Call ACTIVE ({appLabel}) -> AudioOnPc={audioOnPc}");
                     }
                     else if (state == "ENDED")
                     {
-                        try
-                        {
-                            await AppNotificationManager.Default.RemoveByTagAsync("active_call");
-                        }
-                        catch { }
-
-                        AppLogger.Log("CommandReceiver", "Call ENDED.");
+                        AppLogger.Log("CommandReceiver", $"Call ENDED ({appLabel}).");
                     }
+                }
+                else if (type == "HFP_CONNECT_REQ")
+                {
+                    AppLogger.Log("CommandReceiver", "Received HFP_CONNECT_REQ from Android -> Connecting Windows PhoneLineTransportDevice...");
+                    bool connected = await BluetoothHandsFreeService.Instance.EnsureHfpConnectedAsync();
+                    var reply = new JsonObject
+                    {
+                        ["type"] = "HFP_STATUS",
+                        ["Type"] = "HFP_STATUS",
+                        ["connected"] = connected,
+                        ["Connected"] = connected
+                    };
+                    _ = SendCommandAsync(reply.ToJsonString());
                 }
                 else if (type == "AUDIO_ROUTING")
                 {
@@ -561,4 +592,4 @@ namespace dropp.Windows.Services
             }
         }
     }
-}
+}

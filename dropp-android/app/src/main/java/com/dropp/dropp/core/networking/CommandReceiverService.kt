@@ -1,10 +1,10 @@
 package com.dropp.dropp.core.networking
 
 import android.content.Context
+import android.net.Uri
 import android.util.Log
 import com.dropp.dropp.core.security.EncryptionHelper
 import com.dropp.dropp.core.security.SecurityManager
-import android.net.Uri
 import com.dropp.dropp.services.DroppBackgroundService
 import com.dropp.dropp.services.FileTransferManager
 import com.dropp.dropp.services.NotificationSyncService
@@ -186,6 +186,20 @@ object CommandReceiverService {
                             audioManager.isMicrophoneMute = false
                             Log.i("dropp", "Microphone unmuted via CALL_MIC_UNMUTE command")
                         }
+                        "CALL_VOIP_BRIDGE_TEST_START" -> {
+                            Log.i("dropp", "Starting live hardware self-test of DroppVoipConnectionService -> Windows HFP...")
+                            com.dropp.dropp.services.CallAudioBridgeService.shouldRouteToPc = true
+                            com.dropp.dropp.services.CallAudioBridgeService.connectHfp(context)
+                            com.dropp.dropp.services.DroppVoipConnectionService.activateVoipBridgeForPc(
+                                context,
+                                "Dropp VoIP Self-Test",
+                                "+10000000000"
+                            )
+                        }
+                        "CALL_VOIP_BRIDGE_TEST_STOP" -> {
+                            Log.i("dropp", "Stopping live hardware self-test of DroppVoipConnectionService.")
+                            com.dropp.dropp.services.CallAudioBridgeService.stopAudioBridge()
+                        }
                         else -> {
                             Log.w("dropp", "Unknown CALL_COMMAND action: $action")
                         }
@@ -198,6 +212,14 @@ object CommandReceiverService {
                     com.dropp.dropp.services.AudioRoutingManager.setRoutingState(enabled)
                     if (enabled) {
                         com.dropp.dropp.services.AudioRoutingManager.connectA2dp(context)
+                    }
+                }
+
+                "HFP_STATUS" -> {
+                    val connected = if (json.has("connected")) json.optBoolean("connected") else json.optBoolean("Connected", false)
+                    Log.i("dropp", "Received HFP_STATUS from Windows: connected=$connected")
+                    if (connected && com.dropp.dropp.services.CallAudioBridgeService.shouldRouteToPc) {
+                        com.dropp.dropp.services.CallAudioBridgeService.startAudioBridge(context)
                     }
                 }
 
@@ -272,4 +294,4 @@ object CommandReceiverService {
             Log.e("dropp", "Error processing command JSON: ${e.message}", e)
         }
     }
-}
+}

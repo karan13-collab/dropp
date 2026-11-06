@@ -212,6 +212,7 @@ namespace dropp.Windows
                 FileTransfer?.Start();
                 CommandReceiver.Start();
                 CallAudioBridgeService.Instance.StartListener();
+                _ = BluetoothHandsFreeService.Instance.StartAsync();
 
                 m_window.Activate();
                 if (m_window is MainWindow mainWindow)
@@ -291,6 +292,12 @@ namespace dropp.Windows
         {
             if (incomingArgs == null) return false;
             AppLogger.Log("Activation", $"HandleAnyActivationAsync: Kind={incomingArgs.Kind}, Data={incomingArgs.Data?.GetType().FullName}");
+
+            // Handle OS Bluetooth HFP PhoneCallActivation silently so secondary processes exit immediately without redirecting
+            if (incomingArgs.Kind.ToString().Contains("PhoneCall", StringComparison.OrdinalIgnoreCase) || (int)incomingArgs.Kind == 1022)
+            {
+                return true;
+            }
 
             if (incomingArgs.Data is AppNotificationActivatedEventArgs appNotifArgs)
             {
@@ -505,7 +512,7 @@ namespace dropp.Windows
                 else if (string.Equals(actionType, "CALL_ANSWER", StringComparison.OrdinalIgnoreCase))
                 {
                     AppLogger.Log("CallActivation", "User clicked 'Answer on PC' on toast.");
-                    // Call audio will be routed via Bluetooth SCO/HFP from Android
+                    _ = BluetoothHandsFreeService.Instance.EnsureHfpConnectedAsync();
                     try
                     {
                         await Microsoft.Windows.AppNotifications.AppNotificationManager.Default.RemoveByTagAsync("active_call");
@@ -513,15 +520,16 @@ namespace dropp.Windows
                     catch { }
                     return await CommandReceiverService.SendCallCommandAsync("CALL_ANSWER");
                 }
-                else if (string.Equals(actionType, "CALL_REJECT", StringComparison.OrdinalIgnoreCase))
+                else if (string.Equals(actionType, "CALL_REJECT", StringComparison.OrdinalIgnoreCase) ||
+                         string.Equals(actionType, "CALL_END", StringComparison.OrdinalIgnoreCase))
                 {
-                    AppLogger.Log("CallActivation", "User clicked 'Decline' on toast.");
+                    AppLogger.Log("CallActivation", $"User clicked '{actionType}' on toast.");
                     try
                     {
                         await Microsoft.Windows.AppNotifications.AppNotificationManager.Default.RemoveByTagAsync("active_call");
                     }
                     catch { }
-                    return await CommandReceiverService.SendCallCommandAsync("CALL_REJECT");
+                    return await CommandReceiverService.SendCallCommandAsync(actionType);
                 }
                 else
                 {

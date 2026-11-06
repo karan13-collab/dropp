@@ -262,6 +262,7 @@ class NotificationSyncService : NotificationListenerService() {
         super.onCreate()
         instance = this
         SecurityManager.init(this)
+        CallPassthroughManager.start(this)
         try {
             val serviceIntent = Intent(this, DroppBackgroundService::class.java)
             androidx.core.content.ContextCompat.startForegroundService(this, serviceIntent)
@@ -286,21 +287,46 @@ class NotificationSyncService : NotificationListenerService() {
             return
         }
 
-        // Detect incoming phone call notifications and pass to CallPassthroughManager
-        val hasCallAction = sbn.notification.actions?.any { act ->
-            val t = act.title?.toString()?.lowercase() ?: ""
-            t.contains("answer") || t.contains("accept") || t.contains("decline") || t.contains("hang up")
+        // Detect incoming & ongoing phone/VoIP call notifications (Cellular, WhatsApp, Telegram, Instagram, Meet, etc.)
+        val notif = sbn.notification
+        val extras = notif.extras
+        val template = extras?.getString(Notification.EXTRA_TEMPLATE) ?: ""
+        val callTypeExtra = extras?.getInt("android.callType", -1) ?: -1
+        val hasCallStyleExtras = template.contains("CallStyle", ignoreCase = true) ||
+                callTypeExtra > 0 ||
+                extras?.containsKey("android.answerIntent") == true ||
+                extras?.containsKey("android.declineIntent") == true ||
+                extras?.containsKey("android.hangUpIntent") == true
+
+        val hasCallAction = notif.actions?.any { act ->
+            val t = act.title?.toString()?.trim()?.lowercase() ?: ""
+            t == "answer" || t == "accept" || t == "decline" || t == "reject" ||
+            t.contains("hang up") || t.contains("hangup") || t.contains("end call")
         } == true
 
-        val isCallNotification = sbn.notification.category == Notification.CATEGORY_CALL ||
+        val isMissedCall = notif.category == Notification.CATEGORY_MISSED_CALL
+        val isAlarmOrClock = notif.category == Notification.CATEGORY_ALARM ||
+                packageName.contains("clock", ignoreCase = true) ||
+                packageName.contains("alarm", ignoreCase = true) ||
+                packageName.contains("calendar", ignoreCase = true)
+
+        val isCallNotification = !isMissedCall && !isAlarmOrClock && (
+                notif.category == Notification.CATEGORY_CALL ||
+                hasCallStyleExtras ||
                 hasCallAction ||
-                packageName.contains("dialer") ||
-                packageName.contains("telecom") ||
-                packageName.contains("incallui") ||
-                packageName.contains("phone")
+                notif.fullScreenIntent != null ||
+                (sbn.isOngoing && (
+                    packageName.contains("dialer") ||
+                    packageName.contains("telecom") ||
+                    packageName.contains("incallui")
+                ))
+        )
 
         if (isCallNotification) {
+            cachedNotifications[sbn.key] = sbn
             CallPassthroughManager.onCallNotification(this, sbn)
+            // Do not mirror raw duplicate toast notifications for live calls; CALL_EVENT handles the rich Call UI & toast
+            return
         }
 
         // Filter out ongoing notifications (media players, persistent foreground services) and group summaries
@@ -315,7 +341,6 @@ class NotificationSyncService : NotificationListenerService() {
             packageName
         }
 
-        val extras = sbn.notification.extras
         val title = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString()?.trim()
             ?: extras.getCharSequence(Notification.EXTRA_CONVERSATION_TITLE)?.toString()?.trim()
             ?: appName
@@ -423,4 +448,4 @@ class NotificationSyncService : NotificationListenerService() {
             Log.e("dropp", "Error sending dismiss notification: ${e.message}", e)
         }
     }
-}
+}

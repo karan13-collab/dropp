@@ -1,7 +1,6 @@
 package com.dropp.dropp.services
 
 import android.annotation.SuppressLint
-import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothHeadset
 import android.bluetooth.BluetoothManager
 import android.bluetooth.BluetoothProfile
@@ -13,18 +12,29 @@ import android.media.AudioDeviceInfo
 import android.media.AudioManager
 import android.os.Build
 import android.util.Log
+import com.dropp.dropp.core.networking.CommandTransferManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import org.json.JSONObject
 
 /**
- * Routes active cellular call audio through Bluetooth SCO (HFP) to the paired
- * Windows PC, so the PC speakers play the remote caller's voice and the PC mic
- * feeds the user's voice back into the call.
+ * Routes active Cellular AND VoIP (WhatsApp, Telegram, Instagram, Meet, etc.) call audio
+ * through Bluetooth Hands-Free Profile (HFP / eSCO) to the paired Windows PC, so PC speakers
+ * play the caller's voice and the PC microphone feeds the user's voice back into the call.
  *
- * This replaces the old TCP-based audio bridge: Bluetooth HFP natively carries
- * full-duplex voice audio without any custom streaming code.
+ * Important Architectural Rule:
+ * - NEVER invoke unprivileged `AudioManager.setCommunicationDevice()` from `com.dropp.dropp` (`uid`),
+ *   because Android 14/15 `AudioDeviceBroker` revokes unprivileged communication routes after 6s
+ *   (`stopBluetoothSco: updateCommunicationClientActivity`) when the calling UID has no AudioTrack,
+ *   and Windows 11 `bthhfenum.sys` rejects non-Telecom SCO with `HCI_ERR_PEER_USER`.
+ * - Instead:
+ *   1. Cellular SIM calls are routed natively by system `Telecom` (`uid=1000`) once HFP SLC is connected.
+ *   2. VoIP calls are routed via `DroppVoipConnectionService` (`CAPABILITY_SELF_MANAGED` Telecom bridge),
+ *      where privileged `Telecom` (`uid=1000`) holds `bt_sco` and advertises active HFP call state (`+CLCC`)
+ *      to Windows `PhoneLineTransportDevice`.
  */
 object CallAudioBridgeService {
     private const val TAG = "CallAudioBridge"
@@ -34,17 +44,22 @@ object CallAudioBridgeService {
         private set
 
     @Volatile
-    private var previousAudioMode: Int = AudioManager.MODE_NORMAL
+    var shouldRouteToPc = false
+
     @Volatile
-    private var previousSpeakerphoneOn: Boolean = false
-    @Volatile
-    private var previousBluetoothScoOn: Boolean = false
+    private var suppressManualScoTriggerUntilMs: Long = 0L
 
     private var headsetProxy: BluetoothHeadset? = null
+
     @Volatile
     private var isProxyReady = false
 
+    @Volatile
+    private var passiveObserverRegistered = false
+
     private var scoReceiver: BroadcastReceiver? = null
+    private var commDeviceObserver: AudioManager.OnCommunicationDeviceChangedListener? = null
+    private var routingJob: Job? = null
 
     /**
      * Initialise the BluetoothHeadset (HFP) profile proxy so we can query connection state.
@@ -79,7 +94,100 @@ object CallAudioBridgeService {
     }
 
     /**
-     * Connect the BluetoothHeadset (HFP) profile to the paired Windows PC.
+     * Passive observer that detects if the user manually selects the paired Windows PC ("SHASHIKANT")
+     * inside a VoIP app's speaker/Bluetooth menu on the phone, and automatically activates
+     * `DroppVoipConnectionService` so Windows HFP accepts and holds the eSCO audio channel!
+     */
+    @SuppressLint("MissingPermission")
+    @Synchronized
+    fun registerPassiveObserver(context: Context) {
+        if (passiveObserverRegistered) return
+        val appContext = context.applicationContext
+        val audioManager = appContext.getSystemService(Context.AUDIO_SERVICE) as? AudioManager ?: return
+
+        val receiver = object : BroadcastReceiver() {
+            override fun onReceive(ctx: Context, intent: Intent) {
+                @Suppress("DEPRECATION")
+                val state = intent.getIntExtra(AudioManager.EXTRA_SCO_AUDIO_STATE, -1)
+                when (state) {
+                    @Suppress("DEPRECATION")
+                    AudioManager.SCO_AUDIO_STATE_CONNECTING -> {
+                        Log.d(TAG, "Bluetooth SCO audio CONNECTING...")
+                        onPotentialManualPcSelection(appContext)
+                    }
+                    @Suppress("DEPRECATION")
+                    AudioManager.SCO_AUDIO_STATE_CONNECTED -> {
+                        Log.i(TAG, "Bluetooth SCO audio CONNECTED — full-duplex call audio active on PC!")
+                    }
+                    @Suppress("DEPRECATION")
+                    AudioManager.SCO_AUDIO_STATE_DISCONNECTED -> {
+                        Log.i(TAG, "Bluetooth SCO audio DISCONNECTED.")
+                    }
+                }
+            }
+        }
+        scoReceiver = receiver
+        @Suppress("DEPRECATION")
+        val filter = IntentFilter(AudioManager.ACTION_SCO_AUDIO_STATE_UPDATED)
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                appContext.registerReceiver(receiver, filter, Context.RECEIVER_EXPORTED)
+            } else {
+                appContext.registerReceiver(receiver, filter)
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Error registering passive SCO receiver: ${e.message}")
+        }
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            val observer = AudioManager.OnCommunicationDeviceChangedListener { device ->
+                Log.i(TAG, "Passive onCommunicationDeviceChanged -> ${device?.productName} (type=${device?.type})")
+                if (device != null &&
+                    (device.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO || device.type == AudioDeviceInfo.TYPE_BLE_HEADSET)
+                ) {
+                    val winBt = AudioRoutingManager.findWindowsDevice(appContext)
+                    val matchesWin = winBt == null ||
+                        device.address.equals(winBt.address, ignoreCase = true) ||
+                        (winBt.name != null && device.productName?.toString()?.contains(winBt.name, ignoreCase = true) == true)
+                    if (matchesWin) {
+                        onPotentialManualPcSelection(appContext)
+                    }
+                }
+            }
+            try {
+                audioManager.addOnCommunicationDeviceChangedListener(appContext.mainExecutor, observer)
+                commDeviceObserver = observer
+            } catch (e: Exception) {
+                Log.w(TAG, "Could not add passive OnCommunicationDeviceChangedListener: ${e.message}")
+            }
+        }
+
+        passiveObserverRegistered = true
+    }
+
+    private fun onPotentialManualPcSelection(appContext: Context) {
+        if (System.currentTimeMillis() < suppressManualScoTriggerUntilMs) return
+        if (CallPassthroughManager.currentCallType == "VOIP" &&
+            CallPassthroughManager.currentCallState == "ACTIVE" &&
+            !DroppVoipConnectionService.isBridgeActive
+        ) {
+            Log.i(TAG, "Detected user selecting Windows Bluetooth during active VoIP call -> activating Telecom VoIP HFP bridge!")
+            shouldRouteToPc = true
+            isRunning = true
+            val am = appContext.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+            if (am != null) ensureCallVolumeAudible(am)
+            DroppVoipConnectionService.activateVoipBridgeForPc(
+                appContext,
+                CallPassthroughManager.currentCallerName,
+                CallPassthroughManager.currentPhoneNumber
+            )
+            CallPassthroughManager.notifyAudioRouteChanged(appContext, true)
+        }
+    }
+
+    /**
+     * Request both Windows (PhoneLineTransportDevice.ConnectAsync) and Android (BluetoothDevice.connect)
+     * to bring up the Bluetooth HFP Hands-Free Service Level Connection without triggering MODIFY_PHONE_STATE errors.
      */
     @SuppressLint("MissingPermission")
     fun connectHfp(context: Context): Boolean {
@@ -90,261 +198,151 @@ object CallAudioBridgeService {
             return false
         }
 
-        Log.i(TAG, "Attempting to connect BluetoothHeadset (HFP) to Windows: ${device.name} (${device.address})...")
-
         val proxy = headsetProxy
         if (proxy != null) {
             try {
                 val state = proxy.getConnectionState(device)
                 if (state == BluetoothProfile.STATE_CONNECTED) {
-                    Log.i(TAG, "BluetoothHeadset already connected to ${device.name}")
+                    Log.i(TAG, "BluetoothHeadset (HFP) already CONNECTED to ${device.name} (${device.address})")
                     return true
                 }
             } catch (e: Exception) {
-                Log.w(TAG, "Error checking HFP state: ${e.message}")
+                Log.w(TAG, "Error checking HFP connection state: ${e.message}")
             }
-
-            // Ensure connection policy is allowed
-            try {
-                val policyMethod = BluetoothHeadset::class.java.getDeclaredMethod(
-                    "setConnectionPolicy",
-                    android.bluetooth.BluetoothDevice::class.java,
-                    Int::class.javaPrimitiveType
-                )
-                policyMethod.isAccessible = true
-                policyMethod.invoke(proxy, device, 100) // CONNECTION_POLICY_ALLOWED
-                Log.d(TAG, "Set HFP connection policy to ALLOWED (100)")
-            } catch (_: Exception) {
-                try {
-                    val priorityMethod = BluetoothHeadset::class.java.getDeclaredMethod(
-                        "setPriority",
-                        android.bluetooth.BluetoothDevice::class.java,
-                        Int::class.javaPrimitiveType
-                    )
-                    priorityMethod.isAccessible = true
-                    priorityMethod.invoke(proxy, device, 100) // PRIORITY_AUTO_CONNECT
-                } catch (_: Exception) {}
-            }
-
-            // Invoke connect(device) on BluetoothHeadset
-            try {
-                val connectMethod = BluetoothHeadset::class.java.getDeclaredMethod(
-                    "connect",
-                    android.bluetooth.BluetoothDevice::class.java
-                )
-                connectMethod.isAccessible = true
-                val res = connectMethod.invoke(proxy, device)
-                Log.i(TAG, "BluetoothHeadset.connect() invoked on proxy, result: $res")
-                if (res == true) return true
-            } catch (e: Exception) {
-                Log.e(TAG, "BluetoothHeadset.connect error: ${e.message}", e)
-            }
-        } else {
-            Log.w(TAG, "headsetProxy is null, deferring connection to onServiceConnected.")
         }
 
-        // Method 2: BluetoothDevice.connect() (Android 14+ / 15 / 16)
+        // 1. Ask Windows BluetoothHandsFreeService to initiate PhoneLineTransportDevice.ConnectAsync()
+        try {
+            val req = JSONObject().apply {
+                put("type", "HFP_CONNECT_REQ")
+                put("Type", "HFP_CONNECT_REQ")
+            }
+            CommandTransferManager.sendCommand(context, req.toString())
+            Log.d(TAG, "Sent HFP_CONNECT_REQ to Windows for ${device.name}")
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to send HFP_CONNECT_REQ: ${e.message}")
+        }
+
+        // 2. Also invoke BluetoothDevice.connect() on Android 12+ (allowed with BLUETOOTH_CONNECT permission)
         try {
             val devConnect = android.bluetooth.BluetoothDevice::class.java.getDeclaredMethod("connect")
             devConnect.isAccessible = true
             val res = devConnect.invoke(device)
-            Log.i(TAG, "BluetoothDevice.connect() result: $res")
+            Log.i(TAG, "BluetoothDevice.connect() invoked for ${device.name}, result: $res")
             if (res == true || (res is Int && res == 0)) return true
         } catch (e: Exception) {
-            Log.d(TAG, "BluetoothDevice.connect() fallback: ${e.message}")
+            Log.d(TAG, "BluetoothDevice.connect() notice: ${e.message}")
         }
 
         return false
     }
 
     /**
-     * Start routing call audio to the Bluetooth SCO channel (Windows PC).
-     * Call this after the cellular call transitions to ACTIVE (or immediately when user
-     * clicks "Answer on PC" from Windows).
+     * Ensure Bluetooth SCO call volume is audible (at least 75% of max volume) so caller voice isn't muted on PC.
+     */
+    fun ensureCallVolumeAudible(audioManager: AudioManager) {
+        try {
+            val maxVol = audioManager.getStreamMaxVolume(AudioManager.STREAM_VOICE_CALL)
+            val curVol = audioManager.getStreamVolume(AudioManager.STREAM_VOICE_CALL)
+            val minTarget = (maxVol * 0.75).toInt().coerceAtLeast(1)
+            if (curVol < minTarget) {
+                audioManager.setStreamVolume(AudioManager.STREAM_VOICE_CALL, minTarget, 0)
+                Log.i(TAG, "Boosted STREAM_VOICE_CALL volume from $curVol to $minTarget (max=$maxVol) for clear PC call audio.")
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not adjust STREAM_VOICE_CALL volume: ${e.message}")
+        }
+    }
+
+    /**
+     * Start routing call audio to the Bluetooth HFP/eSCO channel (Windows PC).
      */
     @SuppressLint("MissingPermission")
     @Synchronized
     fun startAudioBridge(context: Context, @Suppress("UNUSED_PARAMETER") targetIp: String = "") {
-        if (isRunning) {
-            Log.d(TAG, "Audio bridge already running.")
-            return
-        }
-
+        shouldRouteToPc = true
         isRunning = true
-        Log.i(TAG, "Starting Call Audio Bridge via Bluetooth SCO (HFP)...")
+        val appContext = context.applicationContext
+        registerPassiveObserver(appContext)
+        val audioManager = appContext.getSystemService(Context.AUDIO_SERVICE) as AudioManager
 
-        val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
-
-        // Save current audio state so we can restore later
-        previousAudioMode = audioManager.mode
-        previousSpeakerphoneOn = audioManager.isSpeakerphoneOn
-        @Suppress("DEPRECATION")
-        previousBluetoothScoOn = audioManager.isBluetoothScoOn
-
-        // Register a receiver to track SCO connection state
-        val receiver = object : BroadcastReceiver() {
-            override fun onReceive(ctx: Context, intent: Intent) {
-                @Suppress("DEPRECATION")
-                val state = intent.getIntExtra(AudioManager.EXTRA_SCO_AUDIO_STATE, -1)
-                when (state) {
-                    @Suppress("DEPRECATION")
-                    AudioManager.SCO_AUDIO_STATE_CONNECTED -> {
-                        Log.i(TAG, "Bluetooth SCO audio CONNECTED — call audio now routed to PC.")
-                    }
-                    @Suppress("DEPRECATION")
-                    AudioManager.SCO_AUDIO_STATE_DISCONNECTED -> {
-                        Log.i(TAG, "Bluetooth SCO audio DISCONNECTED.")
-                    }
-                    @Suppress("DEPRECATION")
-                    AudioManager.SCO_AUDIO_STATE_CONNECTING -> {
-                        Log.d(TAG, "Bluetooth SCO audio CONNECTING...")
-                    }
-                    @Suppress("DEPRECATION")
-                    AudioManager.SCO_AUDIO_STATE_ERROR -> {
-                        Log.e(TAG, "Bluetooth SCO audio ERROR.")
-                    }
-                }
-            }
-        }
-        scoReceiver = receiver
-
-        @Suppress("DEPRECATION")
-        val filter = IntentFilter(AudioManager.ACTION_SCO_AUDIO_STATE_UPDATED)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            context.applicationContext.registerReceiver(receiver, filter, Context.RECEIVER_EXPORTED)
-        } else {
-            context.applicationContext.registerReceiver(receiver, filter)
-        }
-
-        // Switch AudioManager to call mode and route through Bluetooth SCO / HFP
-        CoroutineScope(Dispatchers.IO).launch {
+        routingJob?.cancel()
+        routingJob = CoroutineScope(Dispatchers.IO).launch {
             try {
-                // Ensure HFP profile is actively connected
-                connectHfp(context)
+                val callType = CallPassthroughManager.currentCallType
+                Log.i(TAG, "Activating Bluetooth HFP call audio routing to Windows PC (callType=$callType)...")
+                val alreadyConnected = connectHfp(appContext)
+                ensureCallVolumeAudible(audioManager)
 
-                // 1. Maintain or set proper mode for call
-                if (audioManager.mode != AudioManager.MODE_IN_CALL) {
-                    audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
-                }
+                if (callType == "VOIP") {
+                    DroppVoipConnectionService.activateVoipBridgeForPc(
+                        appContext,
+                        CallPassthroughManager.currentCallerName,
+                        CallPassthroughManager.currentPhoneNumber
+                    )
 
-                // 2. Disable speakerphone
-                audioManager.isSpeakerphoneOn = false
-
-                // 3. Modern Android 12+ (API 31+) route via setCommunicationDevice with retry
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                    var targetDevice: AudioDeviceInfo? = null
-
-                    for (attempt in 1..4) {
-                        val commDevices = audioManager.availableCommunicationDevices
-                        targetDevice = commDevices.firstOrNull {
-                            it.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO ||
-                            it.type == AudioDeviceInfo.TYPE_BLE_HEADSET ||
-                            it.type == AudioDeviceInfo.TYPE_HEARING_AID
-                        } ?: commDevices.firstOrNull {
-                            it.type == AudioDeviceInfo.TYPE_BLUETOOTH_A2DP
+                    if (!alreadyConnected) {
+                        for (attempt in 1..8) {
+                            if (!shouldRouteToPc) return@launch
+                            delay(500)
+                            if (isHfpConnected()) {
+                                DroppVoipConnectionService.routeToPc(appContext)
+                                break
+                            }
+                            if (attempt == 3 || attempt == 6) {
+                                connectHfp(appContext)
+                            }
                         }
-
-                        if (targetDevice != null) break
-                        Log.d(TAG, "Attempt $attempt: Waiting for Bluetooth communication device...")
-                        connectHfp(context)
-                        delay(600)
-                    }
-
-                    if (targetDevice != null) {
-                        val success = audioManager.setCommunicationDevice(targetDevice)
-                        Log.i(TAG, "setCommunicationDevice(${targetDevice.productName}, type=${targetDevice.type}) result: $success")
                     } else {
-                        Log.w(TAG, "No Bluetooth communication device found in availableCommunicationDevices. Falling back to startBluetoothSco().")
-                        @Suppress("DEPRECATION")
-                        audioManager.startBluetoothSco()
-                        @Suppress("DEPRECATION")
-                        audioManager.isBluetoothScoOn = true
+                        delay(350)
+                        if (shouldRouteToPc) {
+                            DroppVoipConnectionService.routeToPc(appContext)
+                        }
                     }
                 } else {
-                    @Suppress("DEPRECATION")
-                    audioManager.startBluetoothSco()
-                    @Suppress("DEPRECATION")
-                    audioManager.isBluetoothScoOn = true
-                }
-
-                Log.i(TAG, "Bluetooth call routing started. Call audio should route to paired PC.")
-
-                // 4. Verify routing after a short delay
-                delay(1500)
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                    val activeDevice = audioManager.communicationDevice
-                    Log.i(TAG, "Active communication device: ${activeDevice?.productName} (type=${activeDevice?.type})")
-                } else {
-                    @Suppress("DEPRECATION")
-                    if (audioManager.isBluetoothScoOn) {
-                        Log.i(TAG, "Bluetooth SCO confirmed active after 1.5s.")
-                    } else {
-                        Log.w(TAG, "Bluetooth SCO does not appear active after 1.5s. Retrying...")
-                        @Suppress("DEPRECATION")
-                        audioManager.startBluetoothSco()
-                        @Suppress("DEPRECATION")
-                        audioManager.isBluetoothScoOn = true
+                    // CELLULAR SIM call: system Telecom (uid=1000) automatically routes SIM calls
+                    // to SHASHIKANT once HFP SLC is connected. Retry HFP connection if needed.
+                    if (!alreadyConnected) {
+                        for (attempt in 1..6) {
+                            if (!shouldRouteToPc) return@launch
+                            delay(600)
+                            if (isHfpConnected()) break
+                            if (attempt == 3) connectHfp(appContext)
+                        }
                     }
                 }
             } catch (e: Exception) {
-                Log.e(TAG, "Error starting Bluetooth SCO: ${e.message}", e)
+                Log.e(TAG, "Error in startAudioBridge coroutine: ${e.message}", e)
             }
         }
     }
 
     /**
-     * Stop routing call audio via Bluetooth SCO and restore previous audio state.
+     * Stop routing call audio via Bluetooth HFP (returns call audio to phone earpiece/speaker).
      */
     @Synchronized
     fun stopAudioBridge() {
-        if (!isRunning) return
-        Log.i(TAG, "Stopping Call Audio Bridge (Bluetooth SCO)...")
+        suppressManualScoTriggerUntilMs = System.currentTimeMillis() + 1800L
+        shouldRouteToPc = false
+        routingJob?.cancel()
+        routingJob = null
+
+        val wasRunning = isRunning
         isRunning = false
 
-        try {
-            // Unregister SCO state receiver
-            scoReceiver?.let { receiver ->
-                try {
-                    // Use the application context since that's where we registered
-                    val appContext = com.dropp.dropp.DroppApplication.appContext
-                    appContext?.unregisterReceiver(receiver)
-                } catch (_: Exception) {}
-            }
-            scoReceiver = null
-        } catch (_: Exception) {}
+        DroppVoipConnectionService.endVoipBridge()
 
-        // Restore audio state using a fresh AudioManager reference
-        try {
-            val appContext = com.dropp.dropp.DroppApplication.appContext ?: return
-            val audioManager = appContext.getSystemService(Context.AUDIO_SERVICE) as AudioManager
-
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                audioManager.clearCommunicationDevice()
-            }
-            @Suppress("DEPRECATION")
-            audioManager.isBluetoothScoOn = false
-            @Suppress("DEPRECATION")
-            audioManager.stopBluetoothSco()
-
-            audioManager.mode = previousAudioMode
-            audioManager.isSpeakerphoneOn = previousSpeakerphoneOn
-
-            Log.i(TAG, "Bluetooth call routing stopped. Audio state restored.")
-        } catch (e: Exception) {
-            Log.e(TAG, "Error restoring audio state: ${e.message}", e)
+        if (wasRunning) {
+            Log.i(TAG, "Stopped Call Audio Bridge (call audio returned to phone).")
         }
     }
 
-    /**
-     * Check whether Bluetooth HFP (Headset profile) is currently connected to any device.
-     */
     @SuppressLint("MissingPermission")
     fun isHfpConnected(): Boolean {
         val proxy = headsetProxy ?: return false
         return try {
             proxy.connectedDevices?.isNotEmpty() == true
         } catch (e: Exception) {
-            Log.w(TAG, "Error checking HFP connected devices: ${e.message}")
             false
         }
     }
